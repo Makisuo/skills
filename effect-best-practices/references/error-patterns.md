@@ -373,67 +373,76 @@ yield* Activity.make({
 })
 ```
 
-## HTTP Error Patterns
+## HTTP Status Codes (Without Generic Errors)
 
-### Standard HTTP Error Set
-
-Define a standard set for your API:
+**Map HTTP status codes at the error level, not by creating generic error classes.** Each explicit error can have its own HTTP status.
 
 ```typescript
-// errors/http.ts
-export class BadRequestError extends Schema.TaggedError<BadRequestError>()(
-    "BadRequestError",
-    { message: Schema.String, field: Schema.optional(Schema.String) },
-    HttpApiSchema.annotations({ status: 400 }),
+// ✅ CORRECT - Domain errors with HTTP status annotations
+export class UserNotFoundError extends Schema.TaggedError<UserNotFoundError>()(
+    "UserNotFoundError",
+    { userId: UserId, message: Schema.String },
+    HttpApiSchema.annotations({ status: 404 }),  // Status on specific error
 ) {}
 
+export class ChannelNotFoundError extends Schema.TaggedError<ChannelNotFoundError>()(
+    "ChannelNotFoundError",
+    { channelId: ChannelId, message: Schema.String },
+    HttpApiSchema.annotations({ status: 404 }),  // Same status, different error
+) {}
+
+export class SessionExpiredError extends Schema.TaggedError<SessionExpiredError>()(
+    "SessionExpiredError",
+    { sessionId: SessionId, expiredAt: Schema.DateTimeUtc, message: Schema.String },
+    HttpApiSchema.annotations({ status: 401 }),
+) {}
+
+export class InvalidCredentialsError extends Schema.TaggedError<InvalidCredentialsError>()(
+    "InvalidCredentialsError",
+    { message: Schema.String },
+    HttpApiSchema.annotations({ status: 401 }),  // Same status, different meaning
+) {}
+```
+
+```typescript
+// ❌ WRONG - Generic HTTP error classes
 export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()(
     "UnauthorizedError",
     { message: Schema.String },
     HttpApiSchema.annotations({ status: 401 }),
 ) {}
 
-export class ForbiddenError extends Schema.TaggedError<ForbiddenError>()(
-    "ForbiddenError",
-    { message: Schema.String },
-    HttpApiSchema.annotations({ status: 403 }),
-) {}
+// Then mapping everything to it - loses critical information!
+Effect.catchTags({
+    SessionExpiredError: (err) => Effect.fail(new UnauthorizedError({ message: "Unauthorized" })),
+    InvalidCredentialsError: (err) => Effect.fail(new UnauthorizedError({ message: "Unauthorized" })),
+    MissingTokenError: (err) => Effect.fail(new UnauthorizedError({ message: "Unauthorized" })),
+})
+// Frontend can't distinguish: expired session vs wrong password vs missing token
+```
 
-export class NotFoundError extends Schema.TaggedError<NotFoundError>()(
-    "NotFoundError",
-    { message: Schema.String, resource: Schema.optional(Schema.String) },
-    HttpApiSchema.annotations({ status: 404 }),
-) {}
+### When Generic Errors Are Acceptable
 
-export class ConflictError extends Schema.TaggedError<ConflictError>()(
-    "ConflictError",
-    { message: Schema.String },
-    HttpApiSchema.annotations({ status: 409 }),
-) {}
+Generic errors are only acceptable for **truly unrecoverable internal errors** where:
+- The frontend can only show "Something went wrong"
+- No user action can fix it
+- You're hiding internal details for security
 
+```typescript
+// Acceptable for unrecoverable errors
 export class InternalServerError extends Schema.TaggedError<InternalServerError>()(
     "InternalServerError",
     { message: Schema.String, requestId: Schema.optional(Schema.String) },
     HttpApiSchema.annotations({ status: 500 }),
 ) {}
-```
 
-### Mapping Domain Errors to HTTP Errors
-
-```typescript
-const handleUserErrors = <A, R>(
-    effect: Effect.Effect<A, UserNotFoundError | UserCreateError | DatabaseError, R>
-): Effect.Effect<A, NotFoundError | BadRequestError | InternalServerError, R> =>
-    effect.pipe(
-        Effect.catchTags({
-            UserNotFoundError: (err) =>
-                Effect.fail(new NotFoundError({ message: err.message, resource: "User" })),
-            UserCreateError: (err) =>
-                Effect.fail(new BadRequestError({ message: err.message })),
-            DatabaseError: (err) =>
-                Effect.fail(new InternalServerError({ message: "Database error" })),
-        }),
-    )
+// Use sparingly - only for truly unexpected errors
+Effect.catchAll((unexpectedError) =>
+    Effect.fail(new InternalServerError({
+        message: "An unexpected error occurred",
+        requestId: context.requestId,
+    }))
+)
 ```
 
 ## Error Logging
