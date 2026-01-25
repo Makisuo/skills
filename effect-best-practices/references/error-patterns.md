@@ -1,5 +1,126 @@
 # Error Patterns
 
+## Why Explicit Error Types?
+
+Generic errors like `BadRequestError` or `NotFoundError` seem convenient but create problems:
+
+| Generic Error | Problems |
+|--------------|----------|
+| `NotFoundError` | Which resource? How should frontend recover? |
+| `BadRequestError` | What's invalid? Can user fix it? |
+| `UnauthorizedError` | Session expired? Wrong credentials? Missing permission? |
+| `InternalServerError` | Retryable? User action needed? |
+
+**Explicit errors enable:**
+1. **Specific UI messages** - "Your session expired" vs generic "Unauthorized"
+2. **Targeted recovery** - Refresh token vs show login page
+3. **Better observability** - Group errors by specific type in dashboards
+4. **Type-safe handling** - `catchTag("SessionExpiredError")` vs generic catch
+
+### Anti-Pattern: Generic Error Mapping
+
+```typescript
+// ❌ WRONG - Collapsing to generic HTTP errors
+export class NotFoundError extends Schema.TaggedError<NotFoundError>()(
+    "NotFoundError",
+    { message: Schema.String },
+    HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+// At API boundaries:
+Effect.catchTags({
+    UserNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
+    ChannelNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
+    MessageNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
+})
+
+// Frontend receives: { _tag: "NotFoundError", message: "Not found" }
+// - Can't show specific message ("User doesn't exist" vs "Channel was deleted")
+// - Can't take specific action (redirect to user search vs channel list)
+// - Debugging is harder (which resource was missing?)
+```
+
+```typescript
+// ✅ CORRECT - Keep explicit errors all the way to frontend
+export class UserNotFoundError extends Schema.TaggedError<UserNotFoundError>()(
+    "UserNotFoundError",
+    { userId: UserId, message: Schema.String },
+    HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+export class ChannelNotFoundError extends Schema.TaggedError<ChannelNotFoundError>()(
+    "ChannelNotFoundError",
+    { channelId: ChannelId, message: Schema.String },
+    HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+// Frontend can handle each case:
+Result.builder(result)
+    .onErrorTag("UserNotFoundError", (err) => <UserNotFoundMessage userId={err.userId} />)
+    .onErrorTag("ChannelNotFoundError", (err) => <ChannelDeletedMessage />)
+    .onErrorTag("SessionExpiredError", () => <RedirectToLogin />)
+    .render()
+```
+
+## Error Naming Conventions
+
+| Pattern | Example | Use For |
+|---------|---------|---------|
+| `{Entity}NotFoundError` | `UserNotFoundError`, `ChannelNotFoundError` | Resource lookups |
+| `{Entity}{Action}Error` | `UserCreateError`, `MessageUpdateError` | Mutations that fail |
+| `{Feature}Error` | `SessionExpiredError`, `RateLimitExceededError` | Feature-specific failures |
+| `{Integration}Error` | `WorkOSUserFetchError`, `StripePaymentError` | External service errors |
+| `Invalid{Field}Error` | `InvalidEmailError`, `InvalidPasswordError` | Validation failures |
+
+### Rich Error Context
+
+Include context fields that help with debugging and UI handling:
+
+```typescript
+// Entity errors → include entity ID
+export class UserNotFoundError extends Schema.TaggedError<UserNotFoundError>()(
+    "UserNotFoundError",
+    {
+        userId: UserId,         // Which user?
+        message: Schema.String,
+    },
+    HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+// Action errors → include input that failed
+export class UserCreateError extends Schema.TaggedError<UserCreateError>()(
+    "UserCreateError",
+    {
+        email: Schema.String,   // What email failed?
+        reason: Schema.String,  // Why? "duplicate", "invalid domain"
+        message: Schema.String,
+    },
+    HttpApiSchema.annotations({ status: 400 }),
+) {}
+
+// Integration errors → include service name and retryable flag
+export class StripePaymentError extends Schema.TaggedError<StripePaymentError>()(
+    "StripePaymentError",
+    {
+        stripeErrorCode: Schema.String,
+        retryable: Schema.Boolean,
+        message: Schema.String,
+    },
+    HttpApiSchema.annotations({ status: 402 }),
+) {}
+
+// Auth errors → include expiry info
+export class SessionExpiredError extends Schema.TaggedError<SessionExpiredError>()(
+    "SessionExpiredError",
+    {
+        sessionId: SessionId,
+        expiredAt: Schema.DateTimeUtc,
+        message: Schema.String,
+    },
+    HttpApiSchema.annotations({ status: 401 }),
+) {}
+```
+
 ## Schema.TaggedError for All Errors
 
 **Always use `Schema.TaggedError`** for defining errors. This provides:

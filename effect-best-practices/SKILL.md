@@ -15,6 +15,7 @@ This skill enforces opinionated, consistent patterns for Effect-TS codebases. Th
 | Services | `Effect.Service` with `accessors: true` | `Context.Tag` for business logic |
 | Dependencies | `dependencies: [Dep.Default]` in service | Manual `Layer.provide` at usage sites |
 | Errors | `Schema.TaggedError` with `message` field | Plain classes or generic Error |
+| Error Specificity | `UserNotFoundError`, `SessionExpiredError` | Generic `NotFoundError`, `BadRequestError` |
 | Error Handling | `catchTag`/`catchTags` | `catchAll` or `mapError` |
 | IDs | `Schema.UUID.pipe(Schema.brand("@App/EntityId"))` | Plain `string` for entity IDs |
 | Functions | `Effect.fn("Service.method")` | Anonymous generators |
@@ -121,9 +122,57 @@ yield* repo.findById(id).pipe(
 yield* effect.pipe(
     Effect.catchTags({
         DatabaseError: (err) => Effect.fail(new UserNotFoundError({ userId: id, message: err.message })),
-        ValidationError: (err) => Effect.fail(new BadRequestError({ message: err.message })),
+        ValidationError: (err) => Effect.fail(new InvalidEmailError({ email: input.email, message: err.message })),
     }),
 )
+```
+
+### Prefer Explicit Over Generic Errors
+
+**Every distinct failure reason deserves its own error type.** Don't collapse multiple failure modes into generic HTTP errors.
+
+```typescript
+// WRONG - Generic errors lose information
+export class NotFoundError extends Schema.TaggedError<NotFoundError>()(
+    "NotFoundError",
+    { message: Schema.String },
+    HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+// Then mapping everything to it:
+Effect.catchTags({
+    UserNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
+    ChannelNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
+    MessageNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
+})
+// Frontend gets useless: { _tag: "NotFoundError", message: "Not found" }
+// Which resource? User? Channel? Message? Can't tell!
+```
+
+```typescript
+// CORRECT - Explicit domain errors with rich context
+export class UserNotFoundError extends Schema.TaggedError<UserNotFoundError>()(
+    "UserNotFoundError",
+    { userId: UserId, message: Schema.String },
+    HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+export class ChannelNotFoundError extends Schema.TaggedError<ChannelNotFoundError>()(
+    "ChannelNotFoundError",
+    { channelId: ChannelId, message: Schema.String },
+    HttpApiSchema.annotations({ status: 404 }),
+) {}
+
+export class SessionExpiredError extends Schema.TaggedError<SessionExpiredError>()(
+    "SessionExpiredError",
+    { sessionId: SessionId, expiredAt: Schema.DateTimeUtc, message: Schema.String },
+    HttpApiSchema.annotations({ status: 401 }),
+) {}
+
+// Frontend can now show specific UI:
+// - UserNotFoundError → "User doesn't exist"
+// - ChannelNotFoundError → "Channel was deleted"
+// - SessionExpiredError → "Your session expired. Please log in again."
 ```
 
 See `references/error-patterns.md` for error remapping and retry patterns.
