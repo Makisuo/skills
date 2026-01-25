@@ -1,6 +1,6 @@
 ---
 name: effect-best-practices
-description: This skill should be used when writing Effect-TS code, creating services, defining errors, composing layers, working with @effect/rpc, @effect/cluster, or reviewing Effect code. Triggers on "Effect.Service", "Schema.TaggedError", "Layer.mergeAll", "Effect.gen", "branded types", "RPC contracts", "workflows", "activities", "Effect.fn", "catchTag", "HttpApi".
+description: This skill should be used when writing Effect-TS code, creating services, defining errors, composing layers, working with @effect/rpc, @effect/cluster, @effect-atom/atom-react, or reviewing Effect code. Triggers on "Effect.Service", "Schema.TaggedError", "Layer.mergeAll", "Effect.gen", "branded types", "RPC contracts", "workflows", "activities", "Effect.fn", "catchTag", "HttpApi", "Atom.make", "Atom.family", "useAtomValue", "useAtomSet", "Result.builder", "Atom.keepAlive", "effect-atom", "onErrorTag".
 version: 1.0.0
 ---
 
@@ -22,6 +22,11 @@ This skill enforces opinionated, consistent patterns for Effect-TS codebases. Th
 | Config | `Config.*` with validation | `process.env` directly |
 | Options | `Option.match` with both cases | `Option.getOrThrow` |
 | Nullability | `Option<T>` in domain types | `null`/`undefined` |
+| Atoms | `Atom.make` outside components | Creating atoms inside render |
+| Atom State | `Atom.keepAlive` for global state | Forgetting keepAlive for persistent state |
+| Atom Updates | `useAtomSet` in React components | `Atom.update` imperatively from React |
+| Atom Cleanup | `get.addFinalizer()` for side effects | Missing cleanup for event listeners |
+| Atom Results | `Result.builder` with `onErrorTag` | Ignoring loading/error states |
 
 ## Service Definition Pattern
 
@@ -235,6 +240,81 @@ const name = Option.getOrElse(maybeName, () => "Anonymous")
 const upperName = Option.map(maybeName, (n) => n.toUpperCase())
 ```
 
+## Effect Atom (Frontend State)
+
+Effect Atom provides reactive state management for React with Effect integration.
+
+### Basic Atoms
+
+```typescript
+import { Atom } from "@effect-atom/atom-react"
+
+// Define atoms OUTSIDE components
+const countAtom = Atom.make(0)
+
+// Use keepAlive for global state that should persist
+const userPrefsAtom = Atom.make({ theme: "dark" }).pipe(Atom.keepAlive)
+
+// Atom families for per-entity state
+const modalAtomFamily = Atom.family((type: string) =>
+    Atom.make({ isOpen: false }).pipe(Atom.keepAlive)
+)
+```
+
+### React Integration
+
+```typescript
+import { useAtomValue, useAtomSet, useAtom, useAtomMount } from "@effect-atom/atom-react"
+
+function Counter() {
+    const count = useAtomValue(countAtom)           // Read only
+    const setCount = useAtomSet(countAtom)          // Write only
+    const [value, setValue] = useAtom(countAtom)    // Read + write
+
+    return <button onClick={() => setCount((c) => c + 1)}>{count}</button>
+}
+
+// Mount side-effect atoms without reading value
+function App() {
+    useAtomMount(keyboardShortcutsAtom)
+    return <>{children}</>
+}
+```
+
+### Handling Results with Result.builder
+
+**Use `Result.builder`** for rendering effectful atom results. It provides chainable error handling with `onErrorTag`:
+
+```typescript
+import { Result } from "@effect-atom/atom-react"
+
+function UserProfile() {
+    const userResult = useAtomValue(userAtom) // Result<User, Error>
+
+    return Result.builder(userResult)
+        .onInitial(() => <div>Loading...</div>)
+        .onErrorTag("NotFoundError", () => <div>User not found</div>)
+        .onError((error) => <div>Error: {error.message}</div>)
+        .onSuccess((user) => <div>Hello, {user.name}</div>)
+        .render()
+}
+```
+
+### Atoms with Side Effects
+
+```typescript
+const scrollYAtom = Atom.make((get) => {
+    const onScroll = () => get.setSelf(window.scrollY)
+
+    window.addEventListener("scroll", onScroll)
+    get.addFinalizer(() => window.removeEventListener("scroll", onScroll)) // REQUIRED
+
+    return window.scrollY
+}).pipe(Atom.keepAlive)
+```
+
+See `references/effect-atom-patterns.md` for complete patterns including families, localStorage, and anti-patterns.
+
 ## RPC & Cluster Patterns
 
 For RPC contracts and cluster workflows, see:
@@ -299,5 +379,6 @@ For detailed patterns, consult these reference files in the `references/` direct
 - `schema-patterns.md` - Branded types, transforms, Schema.Class
 - `layer-patterns.md` - Dependency composition, testing layers
 - `rpc-cluster-patterns.md` - RpcGroup, Workflow, Activity patterns
+- `effect-atom-patterns.md` - Atom, families, React hooks, Result handling
 - `anti-patterns.md` - Complete list of forbidden patterns
 - `observability-patterns.md` - Logging, metrics, config patterns
