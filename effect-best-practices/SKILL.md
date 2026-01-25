@@ -1,6 +1,6 @@
 ---
 name: effect-best-practices
-description: This skill should be used when writing Effect-TS code, creating services, defining errors, composing layers, working with @effect/rpc, @effect/cluster, @effect-atom/atom-react, or reviewing Effect code. Triggers on "Effect.Service", "Schema.TaggedError", "Layer.mergeAll", "Effect.gen", "branded types", "RPC contracts", "workflows", "activities", "Effect.fn", "catchTag", "HttpApi", "Atom.make", "Atom.family", "useAtomValue", "useAtomSet", "Result.builder", "Atom.keepAlive", "effect-atom", "onErrorTag".
+description: Enforces Effect-TS patterns for services, errors, layers, and atoms. Use when writing code with Effect.Service, Schema.TaggedError, Layer composition, or effect-atom React components.
 version: 1.0.0
 ---
 
