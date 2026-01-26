@@ -1,7 +1,6 @@
 ---
 name: effect-best-practices
 description: Enforces Effect-TS patterns for services, errors, layers, and atoms. Use when writing code with Effect.Service, Schema.TaggedError, Layer composition, or effect-atom React components.
-version: 1.0.0
 ---
 
 # Effect-TS Best Practices
@@ -190,60 +189,13 @@ yield* effect.pipe(
 
 ### Prefer Explicit Over Generic Errors
 
-**Every distinct failure reason deserves its own error type.** Don't collapse multiple failure modes into generic HTTP errors.
+**Every distinct failure reason deserves its own error type.** Don't collapse multiple failure modes into generic HTTP errors like `NotFoundError` or `BadRequestError`.
 
-```typescript
-// WRONG - Generic errors lose information
-export class NotFoundError extends Schema.TaggedError<NotFoundError>()(
-  "NotFoundError",
-  { message: Schema.String },
-  HttpApiSchema.annotations({ status: 404 }),
-) {}
+- `UserNotFoundError` with `userId` → Frontend shows "User doesn't exist"
+- `ChannelNotFoundError` with `channelId` → Frontend shows "Channel was deleted"
+- `SessionExpiredError` with `expiredAt` → Frontend shows "Session expired, please log in"
 
-// Then mapping everything to it:
-Effect.catchTags({
-  UserNotFoundError: (err) =>
-    Effect.fail(new NotFoundError({ message: "Not found" })),
-  ChannelNotFoundError: (err) =>
-    Effect.fail(new NotFoundError({ message: "Not found" })),
-  MessageNotFoundError: (err) =>
-    Effect.fail(new NotFoundError({ message: "Not found" })),
-});
-// Frontend gets useless: { _tag: "NotFoundError", message: "Not found" }
-// Which resource? User? Channel? Message? Can't tell!
-```
-
-```typescript
-// ✅ CORRECT - Explicit domain errors with rich context
-export class UserNotFoundError extends Schema.TaggedError<UserNotFoundError>()(
-  "UserNotFoundError",
-  { userId: UserId, message: Schema.String },
-  HttpApiSchema.annotations({ status: 404 }),
-) {}
-
-export class ChannelNotFoundError extends Schema.TaggedError<ChannelNotFoundError>()(
-  "ChannelNotFoundError",
-  { channelId: ChannelId, message: Schema.String },
-  HttpApiSchema.annotations({ status: 404 }),
-) {}
-
-export class SessionExpiredError extends Schema.TaggedError<SessionExpiredError>()(
-  "SessionExpiredError",
-  {
-    sessionId: SessionId,
-    expiredAt: Schema.DateTimeUtc,
-    message: Schema.String,
-  },
-  HttpApiSchema.annotations({ status: 401 }),
-) {}
-
-// Frontend can now show specific UI:
-// - UserNotFoundError → "User doesn't exist"
-// - ChannelNotFoundError → "Channel was deleted"
-// - SessionExpiredError → "Your session expired. Please log in again."
-```
-
-See `references/error-patterns.md` for error remapping and retry patterns.
+Generic errors lose context and prevent targeted recovery. See `references/error-patterns.md` for complete patterns including error remapping and retry strategies.
 
 ## Schema & Branded Types Pattern
 
