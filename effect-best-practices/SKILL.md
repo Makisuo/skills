@@ -519,3 +519,4 @@ For detailed patterns, consult these reference files in the `references/` direct
 - `effect-atom-patterns.md` - Atom, families, React hooks, Result handling
 - `anti-patterns.md` - Complete list of forbidden patterns
 - `observability-patterns.md` - Logging, metrics, config patterns
+- `effect-test-patterns.md` - Testing patterns for effect based applications
