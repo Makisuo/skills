@@ -1,5 +1,24 @@
 # Anti-Patterns (Forbidden)
 
+## Table of Contents
+
+- [Effect.runSync/runPromise Inside Services](#forbidden-effectrunsyncrunpromise-inside-services)
+- [throw Inside Effect.gen](#forbidden-throw-inside-effectgen)
+- [catchAll Losing Type Information](#forbidden-catchall-losing-type-information)
+- [any/unknown Casts](#forbidden-anyunknown-casts)
+- [Promise in Service Signatures](#forbidden-promise-in-service-signatures)
+- [console.log](#forbidden-consolelog)
+- [process.env Directly](#forbidden-processenv-directly)
+- [null/undefined in Domain Types](#forbidden-nullundefined-in-domain-types)
+- [Option.getOrThrow](#forbidden-optiongetorthrow)
+- [Context.Tag for Business Services](#forbidden-contexttag-for-business-services)
+- [Ignoring Errors with orDie](#forbidden-ignoring-errors-with-ordie)
+- [mapError Instead of catchTag](#forbidden-maperror-instead-of-catchtag)
+- [Mixing Effect and Promise Chains](#forbidden-mixing-effect-and-promise-chains)
+- [Mutable State Without Ref](#forbidden-mutable-state-without-ref)
+- [Using Date.now() or new Date() Directly](#forbidden-using-datenow-or-new-date-directly)
+- [Deprecated `_` Adaptor in Effect.gen](#forbidden-deprecated-_-adaptor-in-effectgen)
+
 These patterns are **never acceptable** in Effect-TS code. Each is listed with rationale and the correct alternative.
 
 ## FORBIDDEN: Effect.runSync/runPromise Inside Services

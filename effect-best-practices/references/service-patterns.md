@@ -1,5 +1,14 @@
 # Service Patterns
 
+## Table of Contents
+
+- [Effect.Service Over Context.Tag](#effectservice-over-contexttag)
+- [Effect.fn for Tracing](#effectfn-for-tracing)
+- [When Context.Tag is Acceptable](#when-contexttag-is-acceptable)
+- [Single Responsibility](#single-responsibility)
+- [Service Interface Patterns](#service-interface-patterns)
+- [Testing Services](#testing-services)
+
 ## Effect.Service Over Context.Tag
 
 **Always prefer `Effect.Service`** for defining business logic services. This is the modern, recommended approach that provides:

@@ -1,5 +1,20 @@
 # Effect Testing Patterns
 
+## Table of Contents
+
+- [Framework Selection](#framework-selection)
+- [Test Variants](#test-variants)
+- [Effect-Specific Utilities](#effect-specific-utilities)
+- [Testing with Effect.gen](#testing-with-effectgen)
+- [Testing Success and Failure](#testing-success-and-failure)
+- [Mock Layers for Testing](#mock-layers-for-testing)
+- [Testing Error Scenarios](#testing-error-scenarios)
+- [Time-Dependent Testing with TestClock](#time-dependent-testing-with-testclock)
+- [Testing Resource Management](#testing-resource-management)
+- [Property-Based Testing](#property-based-testing)
+- [Testing Best Practices](#testing-best-practices)
+- [Common Pitfalls](#common-pitfalls)
+
 ## Framework Selection
 
 **CRITICAL**: Choose the correct testing framework based on the code being tested.

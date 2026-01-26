@@ -1,5 +1,15 @@
 # Observability Patterns
 
+## Table of Contents
+
+- [Structured Logging with Effect.log](#structured-logging-with-effectlog)
+- [Effect.fn for Automatic Tracing](#effectfn-for-automatic-tracing)
+- [Span Annotations](#span-annotations)
+- [Metrics](#metrics)
+- [Configuration with Config](#configuration-with-config)
+- [Log Level Configuration](#log-level-configuration)
+- [Combining Observability](#combining-observability)
+
 ## Structured Logging with Effect.log
 
 **Always use Effect.log** instead of console.log. Effect.log provides:

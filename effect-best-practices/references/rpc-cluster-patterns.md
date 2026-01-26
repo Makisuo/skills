@@ -1,5 +1,16 @@
 # RPC & Cluster Patterns
 
+## Table of Contents
+
+- [RpcGroup for API Organization](#rpcgroup-for-api-organization)
+- [Error Unions in RPC](#error-unions-in-rpc)
+- [RPC Middleware for Authentication](#rpc-middleware-for-authentication)
+- [Workflow Definition](#workflow-definition)
+- [Activity Patterns](#activity-patterns)
+- [ClusterCron for Scheduled Jobs](#clustercron-for-scheduled-jobs)
+- [Triggering Workflows](#triggering-workflows)
+- [Workflow HTTP API](#workflow-http-api)
+
 ## RpcGroup for API Organization
 
 **Use `RpcGroup.make`** to organize related RPC endpoints:

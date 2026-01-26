@@ -1,5 +1,17 @@
 # Effect Atom Patterns
 
+## Table of Contents
+
+- [Core Concepts](#core-concepts)
+- [Creating Atoms](#creating-atoms)
+- [Atom Families](#atom-families)
+- [React Integration](#react-integration)
+- [Working with Effects and Results](#working-with-effects-and-results)
+- [Batching Updates](#batching-updates)
+- [localStorage Persistence](#localstorage-persistence)
+- [Anti-Patterns](#anti-patterns)
+- [Performance Tips](#performance-tips)
+
 Effect Atom is a reactive state management library that integrates with Effect-TS. It provides atoms (reactive containers), automatic dependency tracking, and seamless React integration.
 
 ## Core Concepts

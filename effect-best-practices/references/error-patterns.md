@@ -1,5 +1,17 @@
 # Error Patterns
 
+## Table of Contents
+
+- [Why Explicit Error Types?](#why-explicit-error-types)
+- [Error Naming Conventions](#error-naming-conventions)
+- [Schema.TaggedError for All Errors](#schemataggederror-for-all-errors)
+- [Error Handling with catchTag/catchTags](#error-handling-with-catchtagcatchtags)
+- [Error Remapping Pattern](#error-remapping-pattern)
+- [Retryable Errors Pattern](#retryable-errors-pattern)
+- [Error Unions for Activities](#error-unions-for-activities)
+- [HTTP Status Codes (Without Generic Errors)](#http-status-codes-without-generic-errors)
+- [Error Logging](#error-logging)
+
 ## Why Explicit Error Types?
 
 Generic errors like `BadRequestError` or `NotFoundError` seem convenient but create problems:

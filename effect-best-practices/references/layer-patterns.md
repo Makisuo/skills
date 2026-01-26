@@ -1,5 +1,17 @@
 # Layer Patterns
 
+## Table of Contents
+
+- [Dependencies in Effect.Service](#dependencies-in-effectservice)
+- [Infrastructure Layers](#infrastructure-layers)
+- [Layer.mergeAll Over Nested Provides](#layermergeall-over-nested-provides)
+- [Layer Naming Conventions](#layer-naming-conventions)
+- [Layer.unwrapEffect for Config-Dependent Layers](#layerunwrapeffect-for-config-dependent-layers)
+- [Scoped Layers](#scoped-layers)
+- [Testing Layer Composition](#testing-layer-composition)
+- [Layer.effect vs Layer.succeed](#layereffect-vs-layersucceed)
+- [Lazy Layers](#lazy-layers)
+
 ## Dependencies in Effect.Service
 
 **Critical rule:** Always declare dependencies in the `dependencies` array of `Effect.Service`. This ensures proper composition and avoids "leaked dependencies" that require manual wiring at usage sites.
