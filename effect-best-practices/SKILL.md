@@ -359,8 +359,7 @@ See `references/layer-patterns.md` for testing layers and config-dependent layer
 
 ```typescript
 // ✅ CORRECT - explicit handling
-yield *
-  Option.match(maybeUser, {
+yield* Option.match(maybeUser, {
     onNone: () =>
       Effect.fail(new UserNotFoundError({ userId, message: "Not found" })),
     onSome: (user) => Effect.succeed(user),

@@ -248,8 +248,8 @@ const dbConfig = Config.all({
 ```typescript
 // For sensitive values that shouldn't be logged
 const secretConfig = Config.all({
-  apiKey: Config.secret("API_KEY"), // Returns Secret<string>
-  dbPassword: Config.secret("DB_PASSWORD"),
+  apiKey: Config.redacted("API_KEY"), // Returns Secret<string>
+  dbPassword: Config.redacted("DB_PASSWORD"),
 });
 
 // Using secrets
