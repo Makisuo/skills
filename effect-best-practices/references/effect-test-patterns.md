@@ -28,6 +28,121 @@ it.effect("should fetch user", () =>
 )
 ```
 
+## Test Variants
+
+### it.effect - Default Test Environment
+
+Provides TestContext including TestClock, TestRandom, etc.
+
+```typescript
+import { it, expect } from "@effect/vitest"
+import { Effect } from "effect"
+
+declare const someEffect: Effect.Effect<number>
+declare const expected: number
+
+it.effect("test name", () =>
+  Effect.gen(function* () {
+    // Test implementation with TestContext available
+    const result = yield* someEffect
+    expect(result).toBe(expected)
+  })
+)
+```
+
+### it.live - Live Environment
+
+Uses real services (real clock, real random, etc.).
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect, Clock } from "effect"
+
+it.live("test with real time", () =>
+  Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis
+    // Uses actual system time
+  })
+)
+```
+
+### it.scoped - Resource Management
+
+For tests requiring Scope to manage resource lifecycle.
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect } from "effect"
+
+declare const acquire: Effect.Effect<unknown>
+declare const release: Effect.Effect<void>
+
+it.scoped("test with resources", () =>
+  Effect.gen(function* () {
+    const resource = yield* Effect.acquireRelease(
+      acquire,
+      () => release
+    )
+    // Resource automatically cleaned up after test
+  })
+)
+```
+
+### it.scopedLive - Combined Scoped + Live
+
+Uses live environment with scope for resource management.
+
+```typescript
+import { it } from "@effect/vitest"
+import { Effect } from "effect"
+
+declare const acquireRealResource: Effect.Effect<unknown>
+declare const releaseRealResource: Effect.Effect<void>
+
+it.scopedLive("live test with resources", () =>
+  Effect.gen(function* () {
+    const resource = yield* Effect.acquireRelease(
+      acquireRealResource,
+      () => releaseRealResource
+    )
+  })
+)
+```
+
+## Effect-Specific Utilities
+
+`@effect/vitest` provides additional assertion utilities in `utils`:
+
+```typescript
+import { it } from "@effect/vitest"
+import {
+  assertEquals,       // Uses Effect's Equal.equals
+  assertTrue,
+  assertFalse,
+  assertSome,        // For Option.Some
+  assertNone,        // For Option.None
+  assertRight,       // For Either.Right
+  assertLeft,        // For Either.Left
+  assertSuccess,     // For Exit.Success
+  assertFailure      // For Exit.Failure
+} from "@effect/vitest/utils"
+import { Effect, Option, Either } from "effect"
+
+declare const someOptionalEffect: Effect.Effect<Option.Option<number>>
+declare const someEitherEffect: Effect.Effect<Either.Either<number, Error>>
+declare const expectedValue: number
+
+it.effect("with effect assertions", () =>
+  Effect.gen(function* () {
+    const option = yield* someOptionalEffect
+    assertSome(option, expectedValue)
+
+    const either = yield* someEitherEffect
+    assertRight(either, expectedValue)
+  })
+)
+```
+
 ## Testing with Effect.gen
 
 ```typescript
@@ -167,7 +282,66 @@ describe("User Repository", () => {
 
 ## Testing Error Scenarios
 
-### Testing Expected Errors
+### Testing Error Types
+
+```typescript
+import { it, expect } from "@effect/vitest"
+import { Effect, Exit, Cause, Context, Data } from "effect"
+
+class NotFoundError extends Data.TaggedError("NotFoundError")<{
+  id: string
+}> {}
+
+class UserService extends Context.Tag("UserService")<UserService, {
+  getUser: (id: string) => Effect.Effect<unknown, NotFoundError>
+}>() {}
+
+declare const userService: {
+  getUser: (id: string) => Effect.Effect<unknown, NotFoundError>
+}
+
+it.effect("should fail with specific error", () =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(
+      userService.getUser("nonexistent")
+    )
+
+    if (Exit.isFailure(exit)) {
+      const cause = exit.cause
+      expect(Cause.isFailType(cause)).toBe(true)
+      const error = Cause.failureOrCause(cause)
+      expect(error).toBeInstanceOf(NotFoundError)
+    } else {
+      throw new Error("Expected failure")
+    }
+  })
+)
+```
+
+### Testing Expected Failures with Effect.flip
+
+Use `Effect.flip` to convert failures to successes for simpler assertions:
+
+```typescript
+import { it, expect } from "@effect/vitest"
+import { Effect, Data } from "effect"
+
+class UserNotFoundError extends Data.TaggedError("UserNotFoundError")<{
+  userId: string
+}> {}
+
+declare const failingOperation: () => Effect.Effect<never, UserNotFoundError>
+
+it.effect("should fail with error", () =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(failingOperation())
+    expect(error).toBeInstanceOf(UserNotFoundError)
+    expect(error.userId).toBe("123")
+  })
+)
+```
+
+### Testing Error Recovery
 
 ```typescript
 import { it, expect, describe } from "@effect/vitest"
@@ -184,16 +358,113 @@ describe("Error Handling", () => {
       expect(result.name).toBe("Guest")
     }).pipe(Effect.provide(TestLayer))
   )
-
-  it.effect("should propagate unhandled errors", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        fetchUser("999").pipe(Effect.provide(TestLayer))
-      )
-      expect(Exit.isFailure(exit)).toBe(true)
-    })
-  )
 })
+```
+
+## Time-Dependent Testing with TestClock
+
+### Basic TestClock Usage
+
+TestClock allows controlling time without waiting:
+
+```typescript
+import { it, expect } from "@effect/vitest"
+import { Effect, TestClock, Fiber } from "effect"
+
+it.effect("should handle delays", () =>
+  Effect.gen(function* () {
+    const fiber = yield* Effect.fork(
+      Effect.sleep("5 seconds").pipe(Effect.as("done"))
+    )
+
+    // Advance time by 5 seconds instantly
+    yield* TestClock.adjust("5 seconds")
+
+    const result = yield* Fiber.join(fiber)
+    expect(result).toBe("done")
+  })
+)
+```
+
+### Testing Recurring Effects
+
+Test periodic operations efficiently:
+
+```typescript
+import { it, expect } from "@effect/vitest"
+import { Effect, Queue, TestClock, Option } from "effect"
+
+it.effect("should execute every minute", () =>
+  Effect.gen(function* () {
+    const queue = yield* Queue.unbounded<number>()
+
+    // Fork effect that repeats every minute
+    yield* Effect.fork(
+      Queue.offer(queue, 1).pipe(
+        Effect.delay("60 seconds"),
+        Effect.forever
+      )
+    )
+
+    // No effect before time passes
+    const empty = yield* Queue.poll(queue)
+    expect(Option.isNone(empty)).toBe(true)
+
+    // Advance time
+    yield* TestClock.adjust("60 seconds")
+
+    // Effect executed once
+    const value = yield* Queue.take(queue)
+    expect(value).toBe(1)
+
+    // Verify only one execution
+    const stillEmpty = yield* Queue.poll(queue)
+    expect(Option.isNone(stillEmpty)).toBe(true)
+  })
+)
+```
+
+### Testing Clock Methods
+
+```typescript
+import { it, expect } from "@effect/vitest"
+import { Effect, Clock, TestClock } from "effect"
+
+it.effect("should track time correctly", () =>
+  Effect.gen(function* () {
+    const start = yield* Clock.currentTimeMillis
+
+    yield* TestClock.adjust("1 minute")
+
+    const end = yield* Clock.currentTimeMillis
+
+    expect(end - start).toBeGreaterThanOrEqual(60_000)
+  })
+)
+```
+
+### TestClock with Deferred
+
+```typescript
+import { it, expect } from "@effect/vitest"
+import { Effect, Deferred, TestClock } from "effect"
+
+it.effect("should handle deferred with delays", () =>
+  Effect.gen(function* () {
+    const deferred = yield* Deferred.make<number, void>()
+
+    yield* Effect.fork(
+      Effect.sleep("10 seconds").pipe(
+        Effect.zipRight(Deferred.succeed(deferred, 42))
+      )
+    )
+
+    yield* TestClock.adjust("10 seconds")
+
+    const result = yield* Deferred.await(deferred)
+    expect(result).toBe(42)
+  })
+)
 ```
 
 ## Testing Resource Management
