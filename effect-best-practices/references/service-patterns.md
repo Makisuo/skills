@@ -125,7 +125,7 @@ const processPayment = Effect.fn("PaymentService.processPayment")(
 Add important context to spans, but don't overdo it:
 
 ```typescript
-// CORRECT - Important business identifiers
+// ✅ CORRECT - Important business identifiers
 yield* Effect.annotateCurrentSpan("userId", userId)
 yield* Effect.annotateCurrentSpan("orderId", orderId)
 yield* Effect.annotateCurrentSpan("amount", amount)
@@ -194,7 +194,7 @@ const DatabaseLive = PgClient.layer({
 Each service should have a focused responsibility:
 
 ```typescript
-// CORRECT - Focused services
+// ✅ CORRECT - Focused services
 export class UserService extends Effect.Service<UserService>()("UserService", { /* user operations */ }) {}
 export class AuthService extends Effect.Service<AuthService>()("AuthService", { /* auth operations */ }) {}
 export class NotificationService extends Effect.Service<NotificationService>()("NotificationService", { /* notifications */ }) {}
@@ -223,7 +223,7 @@ export class AppService extends Effect.Service<AppService>()("AppService", {
 Services should return `Effect` types, never `Promise`:
 
 ```typescript
-// CORRECT
+// ✅ CORRECT
 const findById = Effect.fn("UserService.findById")(
     function* (id: UserId): Effect.Effect<User, UserNotFoundError> {
         // ...
@@ -239,7 +239,7 @@ const findById = async (id: UserId): Promise<User> => {
 ### Use Option for Nullable Results
 
 ```typescript
-// CORRECT - findById can fail, findByIdOption returns Option
+// ✅ CORRECT - findById can fail, findByIdOption returns Option
 const findById = Effect.fn("UserService.findById")(
     function* (id: UserId): Effect.Effect<User, UserNotFoundError> {
         const maybeUser = yield* repo.findById(id)

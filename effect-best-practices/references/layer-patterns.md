@@ -110,7 +110,7 @@ const AppLive = Layer.mergeAll(
 **Use `Layer.mergeAll`** for composing layers at the same level:
 
 ```typescript
-// CORRECT - Flat composition
+// ✅ CORRECT - Flat composition
 const ServicesLive = Layer.mergeAll(
     UserService.Default,
     OrderService.Default,

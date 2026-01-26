@@ -251,7 +251,7 @@ export const OrderFulfillmentWorkflowLayer = OrderFulfillmentWorkflow.toLayer(
 **Always include `success` and `error` schemas** in Activity.make:
 
 ```typescript
-// CORRECT - schemas specified
+// ✅ CORRECT - schemas specified
 yield* Activity.make({
     name: "SendEmail",
     success: EmailSentResult,

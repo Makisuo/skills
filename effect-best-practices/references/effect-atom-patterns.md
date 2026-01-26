@@ -351,7 +351,7 @@ function Counter() {
     return <div>{count}</div>
 }
 
-// CORRECT - define atoms outside components
+// ✅ CORRECT - define atoms outside components
 const countAtom = Atom.make(0)
 
 function Counter() {
@@ -374,7 +374,7 @@ function Component() {
     return <button onClick={() => openModal("settings")}>Open</button>
 }
 
-// CORRECT - use hooks for React integration
+// ✅ CORRECT - use hooks for React integration
 export const useModal = (type: string) => {
     const state = useAtomValue(modalAtomFamily(type))
     const setState = useAtomSet(modalAtomFamily(type))
@@ -406,7 +406,7 @@ const scrollAtom = Atom.make((get) => {
     return window.scrollY
 })
 
-// CORRECT - cleanup registered
+// ✅ CORRECT - cleanup registered
 const scrollAtom = Atom.make((get) => {
     const onScroll = () => get.setSelf(window.scrollY)
     window.addEventListener("scroll", onScroll)
@@ -421,7 +421,7 @@ const scrollAtom = Atom.make((get) => {
 // WRONG - state resets when component unmounts
 export const modalStateAtom = Atom.make({ isOpen: false })
 
-// CORRECT - state persists
+// ✅ CORRECT - state persists
 export const modalStateAtom = Atom.make({ isOpen: false }).pipe(Atom.keepAlive)
 ```
 
@@ -432,7 +432,7 @@ export const modalStateAtom = Atom.make({ isOpen: false }).pipe(Atom.keepAlive)
 const userResult = useAtomValue(userAtom)
 return <div>Hello, {userResult.name}</div> // Type error!
 
-// CORRECT - use Result.builder to handle all states
+// ✅ CORRECT - use Result.builder to handle all states
 const userResult = useAtomValue(userAtom)
 return Result.builder(userResult)
     .onInitial(() => <div>Loading...</div>)
@@ -451,7 +451,7 @@ function Component() {
     return <div>{count}</div>
 }
 
-// CORRECT - use effects or event handlers
+// ✅ CORRECT - use effects or event handlers
 function Component() {
     const count = useAtomValue(countAtom)
     const setCount = useAtomSet(countAtom)
@@ -473,7 +473,7 @@ function Component() {
 const state = useAtomValue(appStateAtom)
 const userName = state.user.name
 
-// CORRECT - derive focused atom
+// ✅ CORRECT - derive focused atom
 const userNameAtom = Atom.map(appStateAtom, (state) => state.user.name)
 const userName = useAtomValue(userNameAtom)
 ```
