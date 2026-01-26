@@ -21,6 +21,7 @@ export class UserService extends Effect.Service<UserService>()("UserService", {
 **Why:** Breaks Effect's composition model, loses error handling, can't be tested, loses tracing.
 
 **Correct:**
+
 ```typescript
 const findById = Effect.fn("UserService.findById")(function* (id: UserId) {
     return yield* repo.findById(id)
@@ -43,6 +44,7 @@ yield* Effect.gen(function* () {
 **Why:** Throws bypass Effect's error channel, can't be caught with `catchTag`, breaks type safety.
 
 **Correct:**
+
 ```typescript
 yield* Effect.gen(function* () {
     const user = yield* repo.findById(id)
@@ -67,6 +69,7 @@ yield* someEffect.pipe(
 **Why:** Loses specific error information, makes debugging harder, prevents specific error handling downstream.
 
 **Correct:**
+
 ```typescript
 yield* someEffect.pipe(
     Effect.catchTags({
@@ -87,6 +90,7 @@ const result = (await fetch(url)) as unknown as MyType
 **Why:** Completely bypasses type safety, can cause runtime errors, loses Effect's type guarantees.
 
 **Correct:**
+
 ```typescript
 // Use Schema for parsing unknown data
 const result = yield* Schema.decodeUnknown(MyType)(someValue)
@@ -115,6 +119,7 @@ export class UserService extends Effect.Service<UserService>()("UserService", {
 **Why:** Loses Effect's error handling, can't compose with other Effects, loses tracing/metrics.
 
 **Correct:**
+
 ```typescript
 const findById = Effect.fn("UserService.findById")(
     function* (id: UserId): Effect.Effect<User, UserNotFoundError> {
@@ -134,6 +139,7 @@ console.error("Error:", error)
 **Why:** Not structured, not captured by Effect's logging system, lost in production telemetry.
 
 **Correct:**
+
 ```typescript
 yield* Effect.log("Processing order", { orderId })
 yield* Effect.logError("Operation failed", { error: String(error) })
@@ -150,6 +156,7 @@ const port = parseInt(process.env.PORT || "3000")
 **Why:** No validation, no type safety, fails silently if missing, hard to test.
 
 **Correct:**
+
 ```typescript
 const config = yield* Config.all({
     apiKey: Config.secret("API_KEY"),
@@ -171,6 +178,7 @@ type User = {
 **Why:** Null/undefined handling is error-prone, loses the explicit "absence" semantics.
 
 **Correct:**
+
 ```typescript
 const User = Schema.Struct({
     name: Schema.String,
@@ -190,6 +198,7 @@ const name = pipe(maybeName, Option.getOrThrow)
 **Why:** Throws exceptions, bypasses Effect's error handling, fails at runtime instead of compile time.
 
 **Correct:**
+
 ```typescript
 // Handle both cases explicitly
 yield* Option.match(maybeUser, {
@@ -219,6 +228,7 @@ export class UserService extends Context.Tag("UserService")<
 **Why:** Requires manual layer creation, no built-in accessors, more boilerplate.
 
 **Correct:**
+
 ```typescript
 export class UserService extends Effect.Service<UserService>()("UserService", {
     accessors: true,
@@ -237,11 +247,13 @@ yield* someEffect.pipe(Effect.orDie)
 **Why:** Converts recoverable errors to defects (unrecoverable), loses error information.
 
 **Acceptable exceptions:**
+
 - Truly unrecoverable situations (invalid program state)
 - After exhausting all recovery options
 - In test setup code
 
 **Correct:**
+
 ```typescript
 // Handle errors explicitly
 yield* someEffect.pipe(
@@ -263,6 +275,7 @@ yield* effect.pipe(
 **Why:** Loses error type information, can't discriminate between error types.
 
 **Correct:**
+
 ```typescript
 yield* effect.pipe(
     Effect.catchTag("SpecificError", (err) =>
@@ -286,6 +299,7 @@ const result = await someEffect.pipe(
 **Why:** Loses Effect composition benefits, error handling becomes inconsistent.
 
 **Correct:**
+
 ```typescript
 const program = Effect.gen(function* () {
     const data = yield* someEffect
@@ -306,6 +320,7 @@ const increment = Effect.sync(() => { counter++ })
 **Why:** Race conditions, not testable, not composable, breaks referential transparency.
 
 **Correct:**
+
 ```typescript
 const program = Effect.gen(function* () {
     const counter = yield* Ref.make(0)
@@ -325,11 +340,32 @@ const timestamp = Date.now()
 **Why:** Not testable, introduces non-determinism, hard to mock in tests.
 
 **Correct:**
+
 ```typescript
 import { Clock } from "effect"
 
 const now = yield* Clock.currentTimeMillis
-const date = yield* Clock.currentTimeZone.pipe(
-    Effect.map((tz) => new Date())
-)
+```
+
+## FORBIDDEN: Deprecated `_` Adaptor in Effect.gen
+
+```typescript
+// FORBIDDEN - deprecated adaptor pattern
+Effect.gen(function* (_) {
+    const user = yield* _(repo.findById(id))
+    const posts = yield* _(fetchPosts(user.id))
+    return { user, posts }
+})
+```
+
+**Why:** The `_` adaptor function is deprecated. Modern Effect allows direct `yield*` without an adaptor.
+
+**Correct:**
+
+```typescript
+Effect.gen(function* () {
+    const user = yield* repo.findById(id)
+    const posts = yield* fetchPosts(user.id)
+    return { user, posts }
+})
 ```

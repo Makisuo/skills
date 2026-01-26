@@ -264,7 +264,7 @@ export const PaymentMethod = Schema.Union(
 
 // Discriminated union (tagged)
 export const PaymentDetails = Schema.Union(
-  Schema.TaggedStruct({
+  Schema.TaggedStruct("Card", {
     cardNumber: Schema.String,
     expiry: Schema.String,
     cvv: Schema.String,

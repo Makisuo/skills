@@ -160,8 +160,7 @@ export class UserCreateError extends Schema.TaggedError<UserCreateError>()(
 
 ```typescript
 // ✅ CORRECT - preserves type information
-yield *
-  repo.findById(id).pipe(
+yield* repo.findById(id).pipe(
     Effect.catchTag("DatabaseError", (err) =>
       Effect.fail(
         new UserNotFoundError({ userId: id, message: "Lookup failed" }),
@@ -175,8 +174,7 @@ yield *
   );
 
 // ✅ CORRECT - multiple tags at once
-yield *
-  effect.pipe(
+yield* effect.pipe(
     Effect.catchTags({
       DatabaseError: (err) =>
         Effect.fail(
