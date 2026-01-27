@@ -5,8 +5,14 @@
 - [Core Concepts](#core-concepts)
 - [Creating Atoms](#creating-atoms)
 - [Atom Families](#atom-families)
+- [Function Atoms (Side Effects)](#function-atoms-side-effects)
+- [Runtime with Services](#runtime-with-services)
 - [React Integration](#react-integration)
 - [Working with Effects and Results](#working-with-effects-and-results)
+- [Stream Integration](#stream-integration)
+- [Pull Atoms (Pagination)](#pull-atoms-pagination)
+- [Scoped Resources & Finalizers](#scoped-resources--finalizers)
+- [Common Patterns](#common-patterns)
 - [Batching Updates](#batching-updates)
 - [localStorage Persistence](#localstorage-persistence)
 - [Anti-Patterns](#anti-patterns)
@@ -122,6 +128,80 @@ const modalAtomFamily = Atom.family((type: ModalType) =>
 - Form state per entity
 - Any parameterized state
 
+## Function Atoms (Side Effects)
+
+Use `Atom.fn` for operations with side effects:
+
+```typescript
+import { Atom } from "@effect-atom/atom-react"
+import { Effect } from "effect"
+
+interface CartState {
+    readonly items: ReadonlyArray<Item>
+    readonly total: number
+}
+
+const cart = Atom.make<CartState>({ items: [], total: 0 })
+
+const addItem = Atom.fn(
+    Effect.fnUntraced(function* (item: Item) {
+        const current = yield* Atom.get(cart)
+
+        yield* Atom.set(cart, {
+            items: [...current.items, item],
+            total: current.total + item.price,
+        })
+    })
+)
+
+const clearCart = Atom.fn(
+    Effect.fnUntraced(function* () {
+        yield* Atom.set(cart, { items: [], total: 0 })
+    })
+)
+```
+
+## Runtime with Services
+
+Wrap Effect layers/services for use in atoms:
+
+```typescript
+import { Atom } from "@effect-atom/atom-react"
+import { Effect, Layer } from "effect"
+
+const runtime = Atom.runtime(
+    Layer.mergeAll(
+        DatabaseService.Live,
+        LoggerService.Live,
+        ApiClient.Live
+    )
+)
+
+const fetchUserData = runtime.fn(
+    Effect.fnUntraced(function* (userId: string) {
+        const db = yield* DatabaseService
+        const user = yield* db.getUser(userId)
+
+        yield* Atom.set(userAtoms(userId), user)
+        return user
+    })
+)
+```
+
+### Global Layers
+
+Configure global layers once at app initialization:
+
+```typescript
+Atom.runtime.addGlobalLayer(
+    Layer.mergeAll(
+        Logger.Live,
+        Tracer.Live,
+        Config.Live
+    )
+)
+```
+
 ## React Integration
 
 ### Reading Atom Values
@@ -180,6 +260,31 @@ function App() {
     useAtomMount(themeApplierAtom)
 
     return <>{children}</>
+}
+```
+
+### Using Function Atoms with useAtomSetPromise
+
+For async function atoms, use `useAtomSetPromise`:
+
+```typescript
+import { useAtomValue, useAtomSet, useAtomSetPromise } from "@effect-atom/atom-react"
+
+function CartView() {
+    const cartData = useAtomValue(cart)
+    const addItem = useAtomSet(addItem)
+    const clearCart = useAtomSet(clearCart)
+
+    // For async function atoms that return promises
+    const fetchData = useAtomSetPromise(fetchUserData)
+
+    return (
+        <div>
+            <div>Items: {cartData.items.length}</div>
+            <button onClick={() => addItem(newItem)}>Add</button>
+            <button onClick={() => clearCart()}>Clear</button>
+        </div>
+    )
 }
 ```
 
@@ -314,6 +419,134 @@ const userProfileAtom = Atom.make(
         return { user, posts }
     })
 )
+```
+
+## Stream Integration
+
+Convert streams into atoms that capture the latest value:
+
+```typescript
+import { Atom } from "@effect-atom/atom-react"
+import { Stream } from "effect"
+
+const notifications = Atom.make(
+    Stream.fromEventListener(window, "notification").pipe(
+        Stream.map(parseNotification),
+        Stream.filter(isValid),
+        Stream.scan([], (acc, n) => [...acc, n].slice(-10))
+    )
+)
+```
+
+## Pull Atoms (Pagination)
+
+Use `Atom.pull` for stream-based pagination:
+
+```typescript
+import { Atom } from "@effect-atom/atom-react"
+import { Stream } from "effect"
+
+const pagedItems = Atom.pull(
+    Stream.fromIterable(itemsSource).pipe(
+        Stream.grouped(10) // Pages of 10 items
+    )
+)
+
+// In component - automatically fetches next page when called
+function ItemList() {
+    const loadMore = useAtomSet(pagedItems)
+    return <button onClick={() => loadMore()}>Load More</button>
+}
+```
+
+## Scoped Resources & Finalizers
+
+Atoms support scoped effects with automatic cleanup using `Effect.acquireRelease`:
+
+```typescript
+import { Atom } from "@effect-atom/atom-react"
+import { Effect } from "effect"
+
+const wsConnection = Atom.make(
+    Effect.gen(function* () {
+        const ws = yield* Effect.acquireRelease(
+            connectWebSocket(),
+            (ws) => Effect.sync(() => ws.close())
+        )
+
+        return ws
+    })
+)
+
+// Finalizer runs when atom rebuilds or becomes unused
+```
+
+## Common Patterns
+
+### Loading States
+
+```typescript
+import { Atom, Result } from "@effect-atom/atom-react"
+import { Effect } from "effect"
+
+const userDataAtom = Atom.make<Result<User, Error>>(Result.initial)
+
+const loadUser = runtime.fn(
+    Effect.fnUntraced(function* (id: string) {
+        yield* Atom.set(userDataAtom, Result.initial)
+
+        const result = yield* Effect.either(userService.fetchUser(id))
+
+        yield* Atom.set(
+            userDataAtom,
+            result._tag === "Right"
+                ? Result.success(result.right)
+                : Result.failure(result.left)
+        )
+    })
+)
+```
+
+### Optimistic Updates
+
+```typescript
+const updateItem = runtime.fn(
+    Effect.fnUntraced(function* (id: string, updates: Partial<Item>) {
+        const current = yield* Atom.get(itemsAtom)
+
+        // Optimistic update
+        yield* Atom.set(
+            itemsAtom,
+            current.map((item) =>
+                item.id === id ? { ...item, ...updates } : item
+            )
+        )
+
+        // Persist to server
+        const result = yield* Effect.either(api.updateItem(id, updates))
+
+        // Revert on failure
+        if (result._tag === "Left") {
+            yield* Atom.set(itemsAtom, current)
+        }
+    })
+)
+```
+
+### Computed Queries
+
+```typescript
+const filteredItems = Atom.make((get) => {
+    const items = get(itemsAtom)
+    const searchTerm = get(searchAtom)
+    const activeFilters = get(filtersAtom)
+
+    return items.filter(
+        (item) =>
+            item.name.includes(searchTerm) &&
+            activeFilters.every((f) => f.predicate(item))
+    )
+})
 ```
 
 ## Batching Updates
