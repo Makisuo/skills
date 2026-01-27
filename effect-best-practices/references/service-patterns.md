@@ -6,6 +6,9 @@
 - [Effect.fn for Tracing](#effectfn-for-tracing)
 - [When Context.Tag is Acceptable](#when-contexttag-is-acceptable)
 - [Single Responsibility](#single-responsibility)
+- [Capability-Based Services](#capability-based-services)
+- [No Requirement Leakage in Service Interface](#no-requirement-leakage-in-service-interface)
+- [Optional Capabilities](#optional-capabilities)
 - [Service Interface Patterns](#service-interface-patterns)
 - [Testing Services](#testing-services)
 
@@ -46,6 +49,7 @@ export class UserService extends Effect.Service<UserService>()("UserService", {
 ### Service with Dependencies
 
 **Critical:** Always declare dependencies using the `dependencies` array. This ensures:
+
 - Dependencies are automatically provided when using `ServiceName.Default`
 - Type errors if dependencies are missing
 - No manual `Layer.provide` at usage sites
@@ -150,7 +154,7 @@ yield* Effect.annotateCurrentSpan("step", "completing")
 
 ## When Context.Tag is Acceptable
 
-`Context.Tag` is appropriate **only** for infrastructure that's injected at runtime:
+`Context.Tag` is appropriate for infrastructure that's injected at runtime:
 
 ### Cloudflare Worker Bindings
 
@@ -223,6 +227,146 @@ export class AppService extends Effect.Service<AppService>()("AppService", {
         }
     }),
 }) {}
+```
+
+## Capability-Based Services
+
+Design services as focused capabilities that compose into complete solutions:
+
+```typescript
+// ❌ WRONG - Mixed concerns in one service
+export class PaymentService extends Context.Tag("PaymentService")<
+  PaymentService,
+  {
+    readonly processPayment: ...
+    readonly validateWebhook: ...
+    readonly refund: ...
+    readonly sendReceipt: ...       // Notification concern
+    readonly generateReport: ...    // Reporting concern
+  }
+>() {}
+
+// ✅ CORRECT - Focused capabilities
+export class PaymentGateway extends Context.Tag(
+  "@services/payment/PaymentGateway"
+)<
+  PaymentGateway,
+  {
+    readonly handoff: (
+      intent: Doc<"paymentIntents">
+    ) => Effect.Effect<HandoffResult, HandoffError, never>
+  }
+>() {}
+
+export class PaymentWebhookGateway extends Context.Tag(
+  "@services/payment/PaymentWebhookGateway"
+)<
+  PaymentWebhookGateway,
+  {
+    readonly validateWebhook: (
+      payload: WebhookPayload
+    ) => Effect.Effect<void, WebhookValidationError, never>
+  }
+>() {}
+
+export class PaymentRefundGateway extends Context.Tag(
+  "@services/payment/PaymentRefundGateway"
+)<
+  PaymentRefundGateway,
+  {
+    readonly refund: (
+      paymentId: PaymentId,
+      amount: Cents
+    ) => Effect.Effect<RefundResult, RefundError, never>
+  }
+>() {}
+```
+
+### Composing Capabilities
+
+Different implementations support different capabilities:
+
+```typescript
+// Cash payments: Basic handoff only
+export const CashGatewayLive = Layer.succeed(
+  PaymentGateway,
+  PaymentGateway.of({
+    handoff: (intent) => fulfillCashPayment(intent)
+  })
+)
+
+// Stripe: Full capability suite
+export const StripeGatewayLive = Layer.mergeAll(
+  StripeHandoffLive,      // Implements PaymentGateway
+  StripeWebhookLive,      // Implements PaymentWebhookGateway
+  StripeRefundLive        // Implements PaymentRefundGateway
+)
+```
+
+## No Requirement Leakage in Service Interface
+
+Service operations should not have requirements in their return type:
+
+```typescript
+// The service interface stays clean
+export class Database extends Context.Tag("Database")<
+  Database,
+  {
+    readonly query: (
+      sql: string
+    ) => Effect.Effect<QueryResult, QueryError, never>
+    //                                             ▲
+    //                                  Requirements = never
+  }
+>() {}
+```
+
+There are certain exceptions to this rule:
+
+- Runtime dependencies (e.g. Cloudflare Bindings, Http Request details)
+- Dependencies that need to be different on each method call (e.g. AI providers depending on availability)
+
+Dependencies are handled during **layer construction**, not in the service interface:
+
+```typescript
+// Dependencies live in the layer
+export const DatabaseLive = Layer.effect(
+  Database,
+  Effect.gen(function* () {
+    const config = yield* Config    // Dependency
+    const logger = yield* Logger    // Dependency
+
+    return Database.of({
+      query: (sql) =>
+        Effect.gen(function* () {
+          yield* logger.log(`Executing: ${sql}`)
+          const { connection } = yield* config.getConfig
+          return executeQuery(connection, sql)
+        })
+    })
+  })
+)
+```
+
+## Optional Capabilities
+
+Use `Effect.serviceOption` for capabilities that may not be available:
+
+```typescript
+const processPayment = (order: Order) =>
+  Effect.gen(function* () {
+    const handoff = yield* PaymentGateway
+    const result = yield* handoff.handoff(order.paymentIntent)
+
+    // Optional capability - check if available
+    const refundGateway = yield* Effect.serviceOption(PaymentRefundGateway)
+
+    if (Option.isSome(refundGateway)) {
+      yield* setupRefundPolicy(refundGateway.value, order)
+    }
+
+    return result
+  })
 ```
 
 ## Service Interface Patterns

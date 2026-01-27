@@ -460,10 +460,11 @@ See `references/observability-patterns.md` for metrics and tracing patterns.
 
 For detailed patterns, consult these reference files in the `references/` directory:
 
-- `service-patterns.md` - Service definition, Effect.fn, Context.Tag exceptions
+- `service-patterns.md` - Service definition, Effect.fn, Context.Tag exceptions, capability-based services
 - `error-patterns.md` - Schema.TaggedError, error remapping, retry patterns
 - `schema-patterns.md` - Branded types, transforms, Schema.Class
-- `layer-patterns.md` - Dependency composition, testing layers
+- `layer-patterns.md` - Dependency composition, testing layers, merge vs provide
+- `domain-predicates.md` - Equivalence, Order, typeclass-derived predicates
 - `rpc-cluster-patterns.md` - RpcGroup, Workflow, Activity patterns
 - `effect-atom-patterns.md` - Atom, families, React hooks, Result handling
 - `anti-patterns.md` - Complete list of forbidden patterns

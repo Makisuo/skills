@@ -2,6 +2,7 @@
 
 ## Table of Contents
 
+- [Layer Structure](#layer-structure)
 - [Dependencies in Effect.Service](#dependencies-in-effectservice)
 - [Infrastructure Layers](#infrastructure-layers)
 - [Layer.mergeAll Over Nested Provides](#layermergeall-over-nested-provides)
@@ -11,6 +12,42 @@
 - [Testing Layer Composition](#testing-layer-composition)
 - [Layer.effect vs Layer.succeed](#layereffect-vs-layersucceed)
 - [Lazy Layers](#lazy-layers)
+- [Merge vs Provide](#merge-vs-provide)
+
+## Layer Structure
+
+Understanding the Layer type signature:
+
+```typescript
+Layer<RequirementsOut, Error, RequirementsIn>
+         ▲                ▲           ▲
+         │                │           └─ What this layer needs
+         │                └─ Errors during construction
+         └─ What this layer produces
+```
+
+Example:
+
+```typescript
+// Layer<Logger, never, Config>
+//         ▲      ▲      ▲
+//         │      │      └─ Needs Config
+//         │      └─ Cannot fail
+//         └─ Produces Logger
+export const LoggerLive = Layer.effect(
+  Logger,
+  Effect.gen(function* () {
+    const config = yield* Config
+    return Logger.of({
+      log: (message) =>
+        Effect.gen(function* () {
+          const { logLevel } = yield* config.getConfig
+          console.log(`[${logLevel}] ${message}`)
+        })
+    })
+  })
+)
+```
 
 ## Dependencies in Effect.Service
 
@@ -142,7 +179,7 @@ const AppLive = ServicesLive.pipe(
 ```
 
 ```typescript
-// WRONG - Deeply nested, hard to read
+// ❌ WRONG - Deeply nested, hard to read
 const AppLive = UserService.Default.pipe(
     Layer.provide(
         OrderService.Default.pipe(
@@ -352,3 +389,91 @@ const ExpensiveServiceLive = Layer.lazy(() => {
     )
 })
 ```
+
+## Merge vs Provide
+
+Understanding when to use `Layer.merge` vs `Layer.provide`:
+
+### Merge (Parallel Composition)
+
+Combine independent layers that don't depend on each other:
+
+```typescript
+// Layer<Config | Logger, never, Config>
+//         ▲               ▲      ▲
+//         │               │      └─ LoggerLive needs Config
+//         │               └─ No errors
+//         └─ Produces both Config and Logger
+const AppConfigLive = Layer.merge(ConfigLive, LoggerLive)
+```
+
+Result combines:
+
+- **Requirements**: Union (`never | Config = Config`)
+- **Outputs**: Union (`Config | Logger`)
+
+### Provide (Sequential Composition)
+
+Chain dependent layers where one satisfies another's requirements:
+
+```typescript
+// Layer<Logger, never, never>
+//         ▲      ▲      ▲
+//         │      │      └─ ConfigLive satisfies LoggerLive's requirement
+//         │      └─ No errors
+//         └─ Only Logger in output
+const FullLoggerLive = Layer.provide(LoggerLive, ConfigLive)
+```
+
+Result:
+
+- **Requirements**: Outer layer's requirements (`never`)
+- **Output**: Inner layer's output (`Logger`)
+
+### ProvideMerge
+
+Chain dependent layers where one satisfies another's requirements, but combine their outputs:
+
+```typescript
+// Layer<Config | Logger, never, never>
+//         ▲               ▲      ▲
+//         │               │      └─ LoggerLive needs Config
+//         │               └─ No errors
+//         └─ Produces both Config and Logger
+const FullLoggerLive = Layer.provideMerge(LoggerLive, ConfigLive)
+```
+
+Result:
+
+- **Requirements**:  `never`
+- **Output**: Union (`Config | Logger`)
+
+### Layered Architecture Example
+
+Build applications in layers:
+
+```typescript
+// Infrastructure: No dependencies
+const InfrastructureLive = Layer.mergeAll(
+  ConfigLive,          // Layer<Config, never, never>
+  DatabaseLive,        // Layer<Database, never, Config>
+  CacheLive            // Layer<Cache, never, Config>
+).pipe(
+  Layer.provide(ConfigLive)  // Satisfy Config requirement
+)
+
+// Domain: Depends on infrastructure
+const DomainLive = Layer.mergeAll(
+  PaymentDomainLive,   // Layer<PaymentDomain, never, Database>
+  OrderDomainLive,     // Layer<OrderDomain, never, Database>
+).pipe(
+  Layer.provide(InfrastructureLive)
+)
+
+// Application: Depends on domain
+const ApplicationLive = Layer.mergeAll(
+  PaymentGatewayLive,
+  NotificationServiceLive
+).pipe(
+  Layer.provide(DomainLive)
+)
