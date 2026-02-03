@@ -465,5 +465,5 @@ const processWithLogging = Effect.fn("OrderService.process")(function* (orderId:
 
 Using `Cause.pretty` with the option `renderErrorCause` set to `true` will log both the Effect and Cause stack traces, often desirable when debugging. Make sure that the nested errors use the `cause` and `message` field on `Schema.TaggedError` for this to work properly.
 ```typescript
-Effect.catchAllCause((cause) => Effect.log(Cause.pretty(cause, { renderErrorCause: true }))),
+Effect.catchAllCause((cause) => Effect.log(Cause.pretty(cause, { renderErrorCause: true })))
 ```
