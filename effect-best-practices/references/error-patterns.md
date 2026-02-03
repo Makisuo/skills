@@ -467,3 +467,19 @@ Using `Cause.pretty` with the option `renderErrorCause` set to `true` will log b
 ```typescript
 Effect.catchAllCause((cause) => Effect.log(Cause.pretty(cause, { renderErrorCause: true })))
 ```
+
+You should also define a `get message()` on custom errors such that `Cause.pretty` can show the details/other fields of the error.
+```typescript
+class MyError extends Schema.TaggedError<MyError>("MyError")(
+  "MyError",
+  {
+    module: Schema.String,
+    method: Schema.String,
+    description: Schema.String
+  }
+) {
+  override get message(): string {
+    return `${this.module}.${this.method}: ${this.description}`
+  }
+}
+```
