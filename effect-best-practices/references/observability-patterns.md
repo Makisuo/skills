@@ -229,24 +229,24 @@ const dbConfig = Config.all({
 })
 ```
 
-### Secret Config
+### Redacted Config
 
 ```typescript
 // For sensitive values that shouldn't be logged
 const secretConfig = Config.all({
-    apiKey: Config.secret("API_KEY"),           // Returns Secret<string>
-    dbPassword: Config.secret("DB_PASSWORD"),
+    apiKey: Config.redacted("API_KEY"),           // Returns Redacted<string>
+    dbPassword: Config.redacted("DB_PASSWORD"),
 })
 
-// Using secrets
+// Using redacted values
 const program = Effect.gen(function* () {
     const { apiKey, dbPassword } = yield* secretConfig
 
-    // Secret values are wrapped - use Secret.value to unwrap
-    const key = Secret.value(apiKey)
+    // Redacted values are wrapped - use Redacted.value to unwrap
+    const key = Redacted.value(apiKey)
 
-    // Logging a Secret shows "[REDACTED]"
-    yield* Effect.log("Config loaded", { apiKey }) // Safe - shows [REDACTED]
+    // Logging a Redacted shows "<redacted>"
+    yield* Effect.log("Config loaded", { apiKey }) // Safe - shows <redacted>
 })
 ```
 

@@ -410,7 +410,7 @@ yield* Metric.increment(orderCounter)
 // Config with validation
 const config = Config.all({
     port: Config.integer("PORT").pipe(Config.withDefault(3000)),
-    apiKey: Config.secret("API_KEY"),
+    apiKey: Config.redacted("API_KEY"),
     maxRetries: Config.integer("MAX_RETRIES").pipe(
         Config.validate({ message: "Must be positive", validation: (n) => n > 0 })
     ),

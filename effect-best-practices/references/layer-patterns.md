@@ -76,7 +76,7 @@ const DatabaseLive = PgClient.layer({
     port: Config.integer("DB_PORT"),
     database: Config.string("DB_NAME"),
     username: Config.string("DB_USER"),
-    password: Config.secret("DB_PASSWORD"),
+    password: Config.redacted("DB_PASSWORD"),
 })
 
 // Services use database but don't declare it in dependencies

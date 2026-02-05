@@ -152,9 +152,41 @@ const port = parseInt(process.env.PORT || "3000")
 **Correct:**
 ```typescript
 const config = yield* Config.all({
-    apiKey: Config.secret("API_KEY"),
+    apiKey: Config.redacted("API_KEY"),
     port: Config.integer("PORT").pipe(Config.withDefault(3000)),
 })
+```
+
+## FORBIDDEN: Config.secret (Deprecated)
+
+```typescript
+// FORBIDDEN (deprecated)
+const secretConfig = Config.all({
+    apiKey: Config.secret("API_KEY"),
+    dbPassword: Config.secret("DB_PASSWORD"),
+})
+```
+
+**Why:** `Config.secret` is deprecated. Use `Config.redacted` instead, which provides the same functionality with better naming and can wrap any config type.
+
+**Correct:**
+```typescript
+import { Config, Redacted } from "effect"
+
+const secretConfig = Config.all({
+    apiKey: Config.redacted("API_KEY"),           // Returns Redacted<string>
+    dbPassword: Config.redacted("DB_PASSWORD"),
+})
+
+// Using redacted values
+const program = Effect.gen(function* () {
+    const { apiKey } = yield* secretConfig
+    const key = Redacted.value(apiKey)  // Unwrap when needed
+})
+
+// Can wrap any config type
+const secretNumber = Config.redacted(Config.integer("SECRET_PORT"))
+//    ^? Redacted<number>
 ```
 
 ## FORBIDDEN: null/undefined in Domain Types
