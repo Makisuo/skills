@@ -144,6 +144,155 @@ const AppLive = UserService.Default.pipe(
 )
 ```
 
+## Layer.provideMerge for Sequential Composition
+
+**Use `Layer.provideMerge`** when chaining layers that need incremental composition. Unlike `Layer.provide`, `provideMerge` merges the output into the current layer, producing flatter types.
+
+```typescript
+// CORRECT - Layer.provideMerge chains for incremental composition
+const MainLive = DatabaseLive.pipe(
+    Layer.provideMerge(ProxyConfigService.Default),
+    Layer.provideMerge(LoggerLive),
+    Layer.provideMerge(CacheLive),
+    Layer.provideMerge(TracerLive),
+)
+
+// WRONG - Multiple Layer.provide calls create nested types
+const MainLive = DatabaseLive.pipe(
+    Layer.provide(ProxyConfigService.Default),
+    Layer.provide(LoggerLive),  // Each provide creates deeper nesting
+    Layer.provide(CacheLive),
+)
+```
+
+**Key difference:** `Layer.provide(A, B)` provides B to A but outputs only A's services. `Layer.provideMerge(A, B)` provides B to A and outputs both A's and B's services merged together.
+
+## Layer Deduplication Benefits
+
+Layers automatically memoize construction - the same service is instantiated only once regardless of how many times it appears in the dependency graph.
+
+```typescript
+// Both UserRepo and OrderRepo depend on DatabaseLive
+const RepoLive = Layer.mergeAll(
+    UserRepo.Default,   // requires DatabaseLive
+    OrderRepo.Default,  // requires DatabaseLive
+)
+
+// With Layer.mergeAll, DatabaseLive is constructed ONCE
+const AppLive = RepoLive.pipe(
+    Layer.provide(DatabaseLive), // Single instance shared
+)
+```
+
+**`Effect.provide` does NOT deduplicate:**
+
+```typescript
+// WRONG - Each provide creates a new instance
+const program = myEffect.pipe(
+    Effect.provide(UserRepo.Default),
+    Effect.provide(OrderRepo.Default),
+    // If both repos need DatabaseLive, and you provide it separately,
+    // you may get TWO database connections!
+)
+
+// CORRECT - Use layers for deduplication
+const program = myEffect.pipe(
+    Effect.provide(AppLive), // Single composed layer
+)
+```
+
+## TypeScript LSP Performance
+
+Deeply nested `Layer.provide` chains create complex recursive types that slow down the TypeScript Language Server.
+
+```typescript
+// PROBLEMATIC - Deep nesting causes slow LSP
+const AppLive = Layer1.pipe(
+    Layer.provide(Layer2.pipe(
+        Layer.provide(Layer3.pipe(
+            Layer.provide(Layer4.pipe(
+                Layer.provide(Layer5),
+            )),
+        )),
+    )),
+)
+// Type becomes: Layer<..., Layer<..., Layer<..., Layer<..., ...>>>>
+```
+
+```typescript
+// BETTER - Flat composition with mergeAll produces simpler types
+const InfraLive = Layer.mergeAll(Layer3, Layer4, Layer5)
+const AppLive = Layer.mergeAll(Layer1, Layer2).pipe(
+    Layer.provide(InfraLive),
+)
+// Type is flatter and LSP responds faster
+```
+
+**Recommendations:**
+- Prefer `Layer.mergeAll` for layers at the same level
+- Use `Layer.provideMerge` instead of chained `Layer.provide` calls
+- Group related layers into intermediate compositions
+- Keep nesting depth shallow (ideally 2-3 levels max)
+
+## layerConfig Pattern
+
+For services that need configuration at construction time, use the `layerConfig` static method pattern:
+
+```typescript
+import { Config, ConfigError, Effect, Layer } from "effect"
+
+interface EventQueueConfig {
+    readonly maxRetries: number
+    readonly batchSize: number
+    readonly pollInterval: number
+}
+
+export class ElectricEventQueue extends Effect.Service<ElectricEventQueue>()(
+    "ElectricEventQueue",
+    {
+        accessors: true,
+        effect: Effect.gen(function* () {
+            // Default implementation
+            return { /* methods */ }
+        }),
+    }
+) {
+    // Static method for config-driven layer
+    static readonly layerConfig = (
+        config: Config.Config.Wrap<EventQueueConfig>,
+    ): Layer.Layer<ElectricEventQueue, ConfigError.ConfigError> =>
+        Layer.unwrapEffect(
+            Config.unwrap(config).pipe(
+                Effect.map((cfg) =>
+                    Layer.succeed(
+                        ElectricEventQueue,
+                        new ElectricEventQueueImpl(cfg)
+                    )
+                )
+            )
+        )
+}
+
+// Usage
+const EventQueueLive = ElectricEventQueue.layerConfig({
+    maxRetries: Config.integer("EVENT_QUEUE_MAX_RETRIES").pipe(
+        Config.withDefault(3)
+    ),
+    batchSize: Config.integer("EVENT_QUEUE_BATCH_SIZE").pipe(
+        Config.withDefault(100)
+    ),
+    pollInterval: Config.integer("EVENT_QUEUE_POLL_INTERVAL").pipe(
+        Config.withDefault(1000)
+    ),
+})
+```
+
+This pattern:
+- Separates configuration from implementation
+- Returns `ConfigError` for missing/invalid config
+- Allows different configs per environment
+- Integrates cleanly with `Layer.mergeAll` and `Layer.provideMerge`
+
 ## Layer Naming Conventions
 
 Use suffixes to indicate layer type:

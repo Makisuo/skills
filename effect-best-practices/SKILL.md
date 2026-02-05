@@ -54,6 +54,8 @@ See `references/language-server.md` for configuration options and CLI tools.
 |----------|-----|-------|
 | Services | `Effect.Service` with `accessors: true` | `Context.Tag` for business logic |
 | Dependencies | `dependencies: [Dep.Default]` in service | Manual `Layer.provide` at usage sites |
+| Layers | `Layer.mergeAll` for flat composition | Deeply nested `Layer.provide` chains |
+| Layer Chaining | `Layer.provideMerge` for incremental composition | Multiple `Layer.provide` (creates nested types) |
 | Errors | `Schema.TaggedError` with `message` field | Plain classes or generic Error |
 | Error Specificity | `UserNotFoundError`, `SessionExpiredError` | Generic `NotFoundError`, `BadRequestError` |
 | Error Handling | `catchTag`/`catchTags` | `catchAll` or `mapError` |
@@ -309,7 +311,30 @@ const AppLive = Layer.mergeAll(
 )
 ```
 
-See `references/layer-patterns.md` for testing layers and config-dependent layers.
+**Layer composition patterns:**
+
+```typescript
+// Use Layer.mergeAll for flat composition of same-level layers
+const RepoLive = Layer.mergeAll(
+    UserRepo.Default,
+    OrderRepo.Default,
+    ProductRepo.Default,
+)
+
+// Use Layer.provideMerge for incremental chaining (flatter types than Layer.provide)
+const MainLive = DatabaseLive.pipe(
+    Layer.provideMerge(ConfigServiceLive),
+    Layer.provideMerge(LoggerLive),
+    Layer.provideMerge(CacheLive),
+)
+```
+
+**Why layers over `Effect.provide`:**
+- **Deduplication**: Layers memoize construction - same service instantiated once. `Effect.provide` creates new instances each call.
+- **TypeScript performance**: Deep `Layer.provide` nesting creates complex recursive types that slow the LSP. `Layer.mergeAll` and `Layer.provideMerge` produce flatter types.
+- **Resource management**: Scoped layers properly share and clean up resources.
+
+See `references/layer-patterns.md` for testing layers, config-dependent layers, and the `layerConfig` pattern.
 
 ## Option Handling
 
