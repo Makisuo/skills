@@ -8,6 +8,46 @@ version: 1.0.0
 
 This skill enforces opinionated, consistent patterns for Effect-TS codebases. These patterns optimize for type safety, testability, observability, and maintainability.
 
+## Effect Language Server (Required)
+
+**The Effect Language Server is essential for Effect development.** It catches errors at edit-time that TypeScript alone cannot detect, provides Effect-specific refactors, and improves developer productivity.
+
+### Setup
+
+1. Install:
+```bash
+npm install @effect/language-service --save-dev
+```
+
+2. Add to `tsconfig.json`:
+```json
+{
+  "compilerOptions": {
+    "plugins": [{ "name": "@effect/language-service" }]
+  }
+}
+```
+
+3. Configure your editor to use workspace TypeScript:
+   - **VSCode**: F1 → "TypeScript: Select TypeScript Version" → "Use Workspace Version"
+   - **JetBrains**: Settings → Languages & Frameworks → TypeScript → Use workspace version
+
+### Features
+
+- **Diagnostics**: Detects 30+ Effect-specific issues (floating Effects, missing requirements, incorrect yield patterns)
+- **Quick Info**: Hover to see Effect type parameters (Success, Error, Requirements)
+- **Completions**: Auto-complete `Self`, Duration strings, Schema brands
+- **Refactors**: Convert async → Effect.gen, auto-compose Layers, transform to Schema
+
+### Build-Time Diagnostics
+
+For CI enforcement:
+```bash
+npx effect-language-service patch
+```
+
+See `references/language-server.md` for configuration options and CLI tools.
+
 ## Quick Reference: Critical Rules
 
 | Category | DO | DON'T |
@@ -423,6 +463,7 @@ See `references/observability-patterns.md` for metrics and tracing patterns.
 
 For detailed patterns, consult these reference files in the `references/` directory:
 
+- `language-server.md` - Effect Language Service setup, diagnostics, refactors, CLI tools
 - `service-patterns.md` - Service definition, Effect.fn, Context.Tag exceptions
 - `error-patterns.md` - Schema.TaggedError, error remapping, retry patterns
 - `schema-patterns.md` - Branded types, transforms, Schema.Class
