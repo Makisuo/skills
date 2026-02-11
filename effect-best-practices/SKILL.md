@@ -427,7 +427,20 @@ const scrollYAtom = Atom.make((get) => {
 }).pipe(Atom.keepAlive)
 ```
 
-See `references/effect-atom-patterns.md` for complete patterns including families, localStorage, and anti-patterns.
+### React Mutations
+
+For mutation atoms, derive loading state from `result.waiting` instead of `useState`:
+
+```typescript
+const [result, mutate] = useAtom(deleteMutation, { mode: "promise" })
+const isLoading = result.waiting // Updates automatically, no useState/finally needed
+```
+
+**Dialog ownership:** Move mutation logic into dialog components. Dialog owns the mutation hook, loading state, and toasts. Parent provides data props and an `onSuccess` callback.
+
+**Cache invalidation:** Use `reactivityKeys` on both mutation and query atoms to auto-invalidate queries after mutations — replaces manual `refresh()` calls.
+
+See `references/effect-atom-patterns.md` for complete patterns including families, localStorage, mutations, and anti-patterns.
 
 ## RPC & Cluster Patterns
 

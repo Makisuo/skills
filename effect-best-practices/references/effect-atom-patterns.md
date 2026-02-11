@@ -171,6 +171,111 @@ function App() {
 }
 ```
 
+## React Mutation Patterns
+
+### Deriving Loading State from result.waiting
+
+When using mutation atoms with `mode: "promise"`, derive loading state from `result.waiting` instead of managing separate `useState`:
+
+```typescript
+const [result, mutate] = useAtom(myMutation, { mode: "promise" })
+const isLoading = result.waiting // No useState needed
+
+const handleSubmit = async () => {
+    try {
+        await mutate(payload)
+        onSuccess?.()
+    } catch (err) {
+        showError(err)
+    }
+    // No finally - result.waiting updates automatically
+}
+
+<Button disabled={isLoading}>{isLoading ? "Loading..." : "Submit"}</Button>
+```
+
+**Why this is preferred:**
+- Single source of truth — loading state lives on the Result
+- No `finally` blocks or manual state resets
+- Automatically synchronized with the mutation lifecycle
+
+### Dialog Components Own Their Mutations
+
+Move mutation logic INTO dialog components rather than keeping it in page components.
+
+**Dialog owns:** mutation hook, loading state, toast notifications
+**Parent provides:** data props, `onSuccess` callback
+
+```typescript
+// CORRECT - dialog owns its mutation
+function ArchivePaywallDialog({
+    paywall,
+    onSuccess,
+}: {
+    paywall: Paywall
+    onSuccess?: () => void
+}) {
+    const [result, archivePaywall] = useAtom(archivePaywallMutation, { mode: "promise" })
+    const isLoading = result.waiting
+
+    const handleArchive = async () => {
+        try {
+            await archivePaywall({ paywallId: paywall.id })
+            toast.success("Paywall archived")
+            onSuccess?.()
+        } catch (err) {
+            toast.error("Failed to archive paywall")
+        }
+    }
+
+    return (
+        <AlertDialog>
+            <AlertDialogContent>
+                <AlertDialogTitle>Archive "{paywall.name}"?</AlertDialogTitle>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <Button onClick={handleArchive} disabled={isLoading}>
+                        {isLoading ? "Archiving..." : "Archive"}
+                    </Button>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+    )
+}
+
+// Parent just passes data and reacts to success
+function PaywallPage() {
+    return <ArchivePaywallDialog paywall={paywall} onSuccess={() => navigate("/paywalls")} />
+}
+```
+
+### reactivityKeys for Cache Invalidation
+
+Mutations can specify `reactivityKeys` to automatically invalidate queries that share the same keys — no manual `refresh()` calls needed.
+
+```typescript
+// Mutation atom with reactivityKeys
+const archivePaywallMutation = Atom.make(
+    Effect.fn(function* (payload: { paywallId: string }) {
+        yield* paywallService.archive(payload.paywallId)
+    }),
+    { reactivityKeys: ["paywalls"] }
+)
+
+// Query atom with matching reactivityKeys — auto-invalidated after mutation
+const paywallsAtom = Atom.make(
+    Effect.fn(function* () {
+        return yield* paywallService.list()
+    }),
+    { reactivityKeys: ["paywalls"] }
+)
+```
+
+**Rules:**
+- Both the mutation and query must share at least one matching key
+- After the mutation succeeds, all atoms with matching keys re-execute
+- Replaces manual patterns like calling `refreshPaywalls()` after mutations
+
 ## Working with Effects and Results
 
 ### Effectful Atoms Return Result
@@ -462,6 +567,61 @@ function Component() {
 
     return <div>{count}</div>
 }
+```
+
+### FORBIDDEN: useState for Mutation Loading State
+
+```typescript
+// WRONG - manual loading state management
+function DeleteDialog({ id }: { id: string }) {
+    const [, deleteThing] = useAtom(deleteMutation, { mode: "promise" })
+    const [isLoading, setIsLoading] = useState(false)
+
+    const handleDelete = async () => {
+        setIsLoading(true)
+        try {
+            await deleteThing({ id })
+        } finally {
+            setIsLoading(false) // Unnecessary boilerplate
+        }
+    }
+}
+
+// CORRECT - derive from result.waiting
+function DeleteDialog({ id }: { id: string }) {
+    const [result, deleteThing] = useAtom(deleteMutation, { mode: "promise" })
+    const isLoading = result.waiting
+
+    const handleDelete = async () => {
+        try {
+            await deleteThing({ id })
+        } catch (err) {
+            showError(err)
+        }
+    }
+}
+```
+
+### FORBIDDEN: Mutations in Parent Components
+
+```typescript
+// WRONG - parent manages the mutation
+function PaywallPage() {
+    const [result, archivePaywall] = useAtom(archivePaywallMutation, { mode: "promise" })
+
+    const handleArchive = async () => {
+        await archivePaywall({ paywallId })
+        toast.success("Archived")
+    }
+
+    return <ConfirmDialog onConfirm={handleArchive} loading={result.waiting} />
+}
+
+// CORRECT - dialog owns its mutation
+function PaywallPage() {
+    return <ArchivePaywallDialog paywall={paywall} onSuccess={() => navigate("/paywalls")} />
+}
+// ArchivePaywallDialog internally uses useAtom(archivePaywallMutation, { mode: "promise" })
 ```
 
 ## Performance Tips
