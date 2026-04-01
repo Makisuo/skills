@@ -127,3 +127,4 @@ Detailed checklists with codebase-specific examples:
 - `references/otel-patterns.md` — Tracing, span annotations, structured logging
 - `references/error-patterns.md` — Schema.TaggedError, catchTag, error context
 - `references/test-patterns.md` — @effect/vitest, it.layer, coverage assessment
+- `references/effect-atom-patterns.md` — Effect-Atom React patterns, queries, mutations, Result.builder

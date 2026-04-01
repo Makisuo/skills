@@ -55,21 +55,7 @@ it.scoped("creates and cleans up", () =>
 )
 ```
 
-## 4. Effect.fn in Test Bodies
-
-Use `Effect.fn("testName")` for test bodies to get better trace names in debugging.
-
-```typescript
-// GOOD
-it.scoped(
-  "validates input",
-  Effect.fn("validates-input.test")(function* () {
-    // test body
-  })
-)
-```
-
-## 5. Effect.either for Error Testing
+## 4. Effect.either for Error Testing
 
 Use `Effect.either` + `Either.isLeft()` to test error cases. Never use try/catch or `.catch()`.
 
@@ -96,7 +82,7 @@ it("fails for invalid id", async () => {
 })
 ```
 
-## 6. Factory Functions for Test Data
+## 5. Factory Functions for Test Data
 
 Use factory functions from `test/testFactories.ts` or local helpers. Don't inline large object literals.
 
@@ -110,7 +96,7 @@ const paywall = yield* createTestPaywall(app.id)
 const org = { id: 1, name: "test", createdAt: new Date(), ... }
 ```
 
-## 7. it.scoped.each for Parameterized Tests
+## 6. it.scoped.each for Parameterized Tests
 
 Use `.each` for testing multiple cases with the same logic.
 
@@ -127,7 +113,7 @@ it.scoped.each([
 )
 ```
 
-## 8. Test Layer Composition
+## 7. Test Layer Composition
 
 Use `DefaultWithoutDependencies` or `.Default.pipe(Layer.provide(...))` for test layers.
 
@@ -145,7 +131,7 @@ const TestLayer = Layer.mergeAll(
 ).pipe(Layer.provide(DatabaseTest))
 ```
 
-## 9. Coverage Assessment
+## 8. Coverage Assessment
 
 When reviewing, check:
 - New service methods have corresponding test cases
