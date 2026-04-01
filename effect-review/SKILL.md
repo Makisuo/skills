@@ -38,6 +38,7 @@ Based on which categories have files, launch the appropriate agents using the Ag
 - `branded-types-reviewer` — checks branded type usage for all entity IDs
 - `otel-reviewer` — checks tracing setup (Effect.fn trace names, annotateCurrentSpan, structured logging)
 - `error-reviewer` — checks error definitions and handling (Schema.TaggedError, catchTag, rich context)
+- `typescript-reviewer` — checks TypeScript patterns (no `as any`, prefer `satisfies` over `as`, no manual type annotations on inferred types)
 
 **If test files exist**, launch:
 - `test-coverage-reviewer` — checks @effect/vitest patterns and assesses coverage gaps
@@ -72,6 +73,9 @@ After all agents complete, compile results into a single report:
 ## Error Handling
 [agent output]
 
+## TypeScript Patterns
+[agent output]
+
 ## Test Coverage
 [agent output]
 
@@ -88,6 +92,7 @@ After all agents complete, compile results into a single report:
 | Branded Types | X | Y | Z |
 | OTEL | X | Y | Z |
 | Errors | X | Y | Z |
+| TypeScript | X | Y | Z |
 | Tests | X | Y | Z |
 | UI | X | Y | Z |
 | **Total** | **X** | **Y** | **Z** |
@@ -126,5 +131,6 @@ Detailed checklists with codebase-specific examples:
 - `references/branded-types.md` — Branded type usage and known types list
 - `references/otel-patterns.md` — Tracing, span annotations, structured logging
 - `references/error-patterns.md` — Schema.TaggedError, catchTag, error context
+- `references/typescript-patterns.md` — No `as any`, prefer `satisfies` over `as`, no manual type annotations
 - `references/test-patterns.md` — @effect/vitest, it.layer, coverage assessment
 - `references/effect-atom-patterns.md` — Effect-Atom React patterns, queries, mutations, Result.builder
