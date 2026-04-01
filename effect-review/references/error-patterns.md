@@ -7,7 +7,7 @@ All errors reaching HTTP boundaries must use `Schema.TaggedError` with `HttpApiS
 ```typescript
 // GOOD
 export class ResourceNotFound extends Schema.TaggedError<ResourceNotFound>()(
-  "@superwall/api-schema/v2/errors/ResourceNotFound",
+  "@myorg/api/errors/ResourceNotFound",
   {
     type: Schema.optionalWith(ErrorType, { default: () => "invalid_request_error" as const }),
     code: Schema.optionalWith(ErrorCode, { default: () => "resource_missing" as const }),
@@ -33,8 +33,8 @@ Error tags should use reverse domain notation matching the package structure.
 
 ```typescript
 // GOOD
-"@superwall/api-schema/v2/errors/ResourceNotFound"
-"@superwall/subscriptions/errors/CheckoutInitiation"
+"@myorg/api/errors/ResourceNotFound"
+"@myorg/subscriptions/errors/CheckoutInitiation"
 
 // BAD
 "ResourceNotFound"

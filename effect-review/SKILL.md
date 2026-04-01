@@ -24,7 +24,7 @@ List the changed files for the user.
 
 Split files into categories:
 
-- **Backend Effect files**: `.ts` files NOT ending in `.test.ts`, NOT under `packages/sui/`, NOT config files (`.config.ts`, `tsconfig`, etc.)
+- **Backend Effect files**: `.ts` files NOT ending in `.test.ts`, NOT config files (`.config.ts`, `tsconfig`, etc.), NOT UI component library directories
 - **Test files**: `.test.ts` files
 - **UI files**: `.tsx` files
 - **Skip**: `.md`, `.json`, `.yml`, `.css`, config files, generated files
@@ -43,7 +43,7 @@ Based on which categories have files, launch the appropriate agents using the Ag
 - `test-coverage-reviewer` — checks @effect/vitest patterns and assesses coverage gaps
 
 **If UI files exist**, launch:
-- `ui-reviewer` — checks SUI component usage, accessibility, layout, brand consistency
+- `ui-reviewer` — checks component library usage, accessibility, layout, brand consistency
 
 For each agent, provide the prompt:
 > Review the following files for [agent's specialty]. Read each file and produce a structured report with Critical/Warning/Info findings.
@@ -51,7 +51,7 @@ For each agent, provide the prompt:
 > Files to review:
 > - [list of file paths]
 >
-> Also review the reference guide at `${CLAUDE_PLUGIN_ROOT}/skills/effect-review/references/[relevant-reference].md` for the detailed checklist.
+> Also review the reference guide at `references/[relevant-reference].md` (relative to this skill) for the detailed checklist.
 
 ### Step 4: Unified Report
 

@@ -2,20 +2,28 @@
 
 ## Core Rule
 
-All entity IDs in the Superwall codebase MUST use branded types from `@superwall/drizzle/branded`. Never use plain `string` or `number` for IDs.
+All entity IDs MUST use branded types via `Schema.brand()`. Never use plain `string` or `number` for IDs. This prevents mixing up IDs of different entity types at compile time.
 
-## Known Branded Types
+## How to Define Branded Types
 
-Import from `@superwall/drizzle/branded`:
+```typescript
+import { Schema } from "effect"
 
-**Integer IDs (most common):**
-`ApplicationId`, `OrganizationId`, `ProjectId`, `PaywallId`, `ProductId`, `EntitlementId`, `ExperimentId`, `UserId`, `MembershipId`, `VariantId`, `TriggerExperimentGroupId`, `PaywallTemplateId`, `PaywallTriggerId`, `CampaignId`, `PaywallVersionId`, `PaywallSnapshotId`
+// Integer IDs
+export const UserId = Schema.Int.pipe(Schema.brand("@myorg/schema/UserId"))
+export type UserId = Schema.Schema.Type<typeof UserId>
 
-**String IDs:**
-`PublicApiKey`, `PrivateApiKey`
+// String IDs
+export const ApiKey = Schema.String.pipe(Schema.brand("@myorg/schema/ApiKey"))
+export type ApiKey = Schema.Schema.Type<typeof ApiKey>
 
-**FromString variants (for URL params):**
-`ApplicationIdFromString`, `OrganizationIdFromString`, `PaywallIdFromString`, `ProjectIdFromString`, `ProductIdFromString`, `EntitlementIdFromString`, `CampaignIdFromString`
+// FromString variants (for URL params that arrive as strings)
+export const UserIdFromString = Schema.NumberFromString.pipe(
+  Schema.brand("@myorg/schema/UserId")
+)
+```
+
+Define branded types for every entity ID in your domain (e.g., `UserId`, `OrganizationId`, `ProjectId`, `OrderId`, `ProductId`, etc.) and colocate them in a shared branded types module.
 
 ## Checklist
 
@@ -23,10 +31,10 @@ Import from `@superwall/drizzle/branded`:
 
 ```typescript
 // GOOD
-const findById = (productId: ProductId, organizationId: OrganizationId) => ...
+const findById = (userId: UserId, organizationId: OrganizationId) => ...
 
 // BAD
-const findById = (productId: number, organizationId: number) => ...
+const findById = (userId: number, organizationId: number) => ...
 ```
 
 ### 2. No `as` Casting for IDs
@@ -34,13 +42,13 @@ const findById = (productId: number, organizationId: number) => ...
 ```typescript
 // GOOD
 import { Schema } from "effect"
-const id = Schema.decodeSync(ApplicationId)(rawValue)
+const id = Schema.decodeSync(UserId)(rawValue)
 // or use the branded constructor
-const id = ApplicationId.make(rawValue)
+const id = UserId.make(rawValue)
 
 // BAD
-const id = rawValue as ApplicationId
-const id = someNumber as unknown as ApplicationId
+const id = rawValue as UserId
+const id = someNumber as unknown as UserId
 ```
 
 ### 3. *FromString Variants for URL/Route Params
@@ -50,17 +58,17 @@ URL params arrive as strings. Use `*FromString` schemas to decode them.
 ```typescript
 // GOOD
 const params = Schema.Struct({
-  applicationId: ApplicationIdFromString,
-  paywallId: PaywallIdFromString,
+  userId: UserIdFromString,
+  projectId: ProjectIdFromString,
 })
 
 // BAD
-const applicationId = parseInt(req.params.applicationId) as ApplicationId
+const userId = parseInt(req.params.userId) as UserId
 ```
 
-### 4. Drizzle Schema Alignment
+### 4. Database Schema Alignment
 
-When a Drizzle column uses a branded type, all code accessing that column must use the same branded type throughout. Check that:
+When a database column uses a branded type, all code accessing that column must use the same branded type throughout. Check that:
 - Repository method params match column types
 - Service method params propagate branded types (not plain numbers)
 - API handler params decode to branded types before passing to services
@@ -69,15 +77,15 @@ When a Drizzle column uses a branded type, all code accessing that column must u
 
 ```typescript
 // GOOD
-interface PaywallConfig {
-  paywallId: PaywallId
-  applicationId: ApplicationId
+interface OrderConfig {
+  orderId: OrderId
+  userId: UserId
 }
 
 // BAD
-interface PaywallConfig {
-  paywallId: number
-  applicationId: number
+interface OrderConfig {
+  orderId: number
+  userId: number
 }
 ```
 
@@ -86,5 +94,5 @@ interface PaywallConfig {
 - Function signatures (params and return types)
 - Interface/type definitions containing IDs
 - Schema definitions for API input/output
-- Drizzle query `.where()` clauses
+- Database query `.where()` clauses
 - Variable declarations storing IDs
