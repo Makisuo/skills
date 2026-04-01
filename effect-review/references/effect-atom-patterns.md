@@ -12,7 +12,7 @@ import { useAtom, useAtomValue, useAtomSet, useAtomRefresh } from "@effect-atom/
 
 ## 1. Use Typesafe Clients (AtomHttpApi or AtomRpc)
 
-All API communication should go through a **typesafe client** — either `AtomHttpApi.Tag` for HTTP APIs or `AtomRpc.Tag` for Effect RPC. Never use raw `fetch`, `axios`, or untyped API calls.
+API calls to **our own Effect HttpApi or Effect RPC backends** should go through a **typesafe client** — `AtomHttpApi.Tag` for Effect HttpApi backends or `AtomRpc.Tag` for Effect RPC backends. This gives end-to-end type safety from the server schema to the client. Raw `fetch`/`axios` is acceptable for third-party/external APIs or non-Effect backends.
 
 ### HTTP API Client (AtomHttpApi)
 
@@ -50,15 +50,17 @@ export class UsersClient extends AtomRpc.Tag<UsersClient>()(
 
 ### What to Flag
 
+Only flag raw fetch/axios when targeting **our own Effect HttpApi or Effect RPC backends** where a typesafe client can derive types from the server schema. Calls to external APIs or non-Effect backends are fine.
+
 ```typescript
-// BAD — raw fetch, no type safety
+// BAD — raw fetch to our own API, no type safety
 const res = await fetch("/api/users", { method: "POST", body: JSON.stringify(data) })
 const users = await res.json() // `any` type, no validation
 
-// BAD — axios or other untyped HTTP client
-const { data } = await axios.get("/api/users")
+// FINE — external third-party API, we don't control it
+const res = await fetch("https://api.stripe.com/v1/customers", { ... })
 
-// GOOD — typesafe client, request and response fully typed
+// GOOD — typesafe client for our own API
 export const usersAtom = ApiClient.query("users", "listUsers", { timeToLive: "5 minutes" })
 export const createUserMutation = ApiClient.mutation("users", "createUser")
 ```
@@ -247,7 +249,7 @@ function CreateUserDialog({ open, onOpenChange, onSubmit, isLoading }: Props) {
 
 ## What to Flag
 
-- **Critical**: Raw `fetch`/`axios` calls without a typesafe client (should use `AtomHttpApi` or `AtomRpc`)
+- **Critical**: Raw `fetch`/`axios` calls to **our own Effect HttpApi/RPC backends** without a typesafe client (should use `AtomHttpApi` or `AtomRpc`). External APIs or non-Effect backends are fine.
 - **Critical**: `useState` + `useEffect` + `fetch` for data fetching (should use Effect-Atom query atoms)
 - **Critical**: `useState` for loading state when an atom mutation is available (`result.waiting`)
 - **Warning**: Manual if/else for result states instead of `Result.builder()`
