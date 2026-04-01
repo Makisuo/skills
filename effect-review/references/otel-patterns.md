@@ -2,10 +2,15 @@
 
 ## 1. Effect.fn With Trace Names
 
-Every service method must use `Effect.fn("ServiceName.methodName")` for automatic span creation. Never use anonymous `() => Effect.gen(function* () { ... })` for service methods.
+`Effect.fn` replaces the pattern where an arrow function wraps `Effect.gen`. It does NOT apply to bare `Effect.gen` calls without a wrapping function. It also does NOT apply in `.test.ts` files.
 
 ```typescript
-// GOOD
+// BAD — arrow function wrapping Effect.gen, should use Effect.fn
+const findById = (productId: ProductId) => Effect.gen(function* () {
+  // no trace name, anonymous span
+})
+
+// GOOD — Effect.fn replaces the arrow function wrapper
 const findById = Effect.fn("ProductRepository.findById")(function* (
   productId: ProductId,
   organizationId: OrganizationId
@@ -14,9 +19,10 @@ const findById = Effect.fn("ProductRepository.findById")(function* (
   // ...
 })
 
-// BAD
-const findById = (productId: ProductId) => Effect.gen(function* () {
-  // no trace name, anonymous span
+// FINE — bare Effect.gen without wrapping function, no Effect.fn needed
+yield* Effect.gen(function* () {
+  const user = yield* UserService
+  // inline composition, not a named function
 })
 ```
 
