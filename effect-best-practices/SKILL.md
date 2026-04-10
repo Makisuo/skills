@@ -63,7 +63,7 @@ import { Schema } from "@effect/schema"
 | Dependencies      | `dependencies: [Dep.Default]` at the top of the service | Manual `Layer.provide` at usage sites      |
 | Errors            | `Schema.TaggedError` with `message` and `cause` fields  | Plain classes or generic Error             |
 | Error Specificity | `UserNotFoundError`, `SessionExpiredError`              | Generic `NotFoundError`, `BadRequestError` |
-| Error Handling    | `catchTag`/`catchTags`                                  | `catchAll` or `mapError`                   |
+| Error Handling    | `catchTag` (supports multiple tags) / `catchTags`       | `catchAll` or `mapError`                   |
 | IDs               | `Schema.UUID.pipe(Schema.brand("@App/EntityId"))`       | Plain `string` for entity IDs              |
 | Functions         | `Effect.fn("Service.method")`                           | Anonymous generators                       |
 | Logging           | `Effect.log` with structured data                       | `console.log`                              |
@@ -130,7 +130,7 @@ See `references/service-patterns.md` for detailed patterns.
 
 ## Error Definition Pattern
 
-**Always use `Schema.TaggedError`** for errors. This makes them serializable (required for RPC) and provides consistent structure.
+**Always use `Schema.TaggedError`** for errors. This makes them serializable (required for RPC), provides consistent structure, and makes them **yieldable** — no `Effect.fail()` wrapper needed since `TaggedError` instances implement the `Effect` interface directly.
 
 ```typescript
 import { Schema } from "effect";
@@ -158,31 +158,30 @@ export class UserCreateError extends Schema.TaggedError<UserCreateError>()(
 **Error handling - use `catchTag`/`catchTags`:**
 
 ```typescript
-// ✅ CORRECT - preserves type information
+// ✅ CORRECT - single tag
 yield* repo.findById(id).pipe(
     Effect.catchTag("DatabaseError", (err) =>
-      Effect.fail(
-        new UserNotFoundError({ userId: id, message: "Lookup failed" }),
-      ),
-    ),
-    Effect.catchTag("ConnectionError", (err) =>
-      Effect.fail(
-        new ServiceUnavailableError({ message: "Database unreachable" }),
-      ),
+      new UserNotFoundError({ userId: id, message: "Lookup failed" }),
     ),
   );
 
-// ✅ CORRECT - multiple tags at once
+// ✅ CORRECT - multiple tags, same handler (catchTag accepts variadic tags)
+yield* effect.pipe(
+    Effect.catchTag(
+      "TokenExpiredError",
+      "TokenInvalidError",
+      "MissingTokenError",
+      () => new AuthError({ message: "Authentication failed" }),
+    ),
+  );
+
+// ✅ CORRECT - multiple tags, different handlers (use catchTags)
 yield* effect.pipe(
     Effect.catchTags({
       DatabaseError: (err) =>
-        Effect.fail(
-          new UserNotFoundError({ userId: id, message: err.message }),
-        ),
+        new UserNotFoundError({ userId: id, message: err.message }),
       ValidationError: (err) =>
-        Effect.fail(
-          new InvalidEmailError({ email: input.email, message: err.message }),
-        ),
+        new InvalidEmailError({ email: input.email, message: err.message }),
     }),
   );
 ```
@@ -312,8 +311,7 @@ See `references/layer-patterns.md` for testing layers and config-dependent layer
 ```typescript
 // ✅ CORRECT - explicit handling
 yield* Option.match(maybeUser, {
-    onNone: () =>
-      Effect.fail(new UserNotFoundError({ userId, message: "Not found" })),
+    onNone: () => new UserNotFoundError({ userId, message: "Not found" }),
     onSome: (user) => Effect.succeed(user),
   });
 

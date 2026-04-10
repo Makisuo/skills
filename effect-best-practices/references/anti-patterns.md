@@ -68,7 +68,7 @@ yield* Effect.gen(function* () {
 yield* Effect.gen(function* () {
     const user = yield* repo.findById(id)
     if (!user) {
-        return yield* Effect.fail(new UserNotFoundError({ userId: id, message: "Not found" }))
+        return yield* new UserNotFoundError({ userId: id, message: "Not found" })
     }
     return user
 })
@@ -90,11 +90,21 @@ yield* someEffect.pipe(
 **Correct:**
 
 ```typescript
+// Different handlers per tag → use catchTags
 yield* someEffect.pipe(
     Effect.catchTags({
-        DatabaseError: (err) => Effect.fail(new ServiceUnavailableError({ message: err.message })),
-        ValidationError: (err) => Effect.fail(new BadRequestError({ message: err.message })),
+        DatabaseError: (err) => new ServiceUnavailableError({ message: err.message }),
+        ValidationError: (err) => new BadRequestError({ message: err.message }),
     }),
+)
+
+// Same handler for multiple tags → use catchTag with multiple tag strings
+yield* someEffect.pipe(
+    Effect.catchTag(
+        "DatabaseError",
+        "ConnectionError",
+        (err) => new ServiceUnavailableError({ message: err.message }),
+    ),
 )
 ```
 
@@ -221,7 +231,7 @@ const name = pipe(maybeName, Option.getOrThrow)
 ```typescript
 // Handle both cases explicitly
 yield* Option.match(maybeUser, {
-    onNone: () => Effect.fail(new UserNotFoundError({ userId, message: "Not found" })),
+    onNone: () => new UserNotFoundError({ userId, message: "Not found" }),
     onSome: Effect.succeed,
 })
 
@@ -277,7 +287,7 @@ yield* someEffect.pipe(Effect.orDie)
 // Handle errors explicitly
 yield* someEffect.pipe(
     Effect.catchTag("RecoverableError", (err) =>
-        Effect.fail(new DomainError({ message: err.message }))
+        new DomainError({ message: err.message })
     ),
 )
 ```
@@ -298,7 +308,7 @@ yield* effect.pipe(
 ```typescript
 yield* effect.pipe(
     Effect.catchTag("SpecificError", (err) =>
-        Effect.fail(new MappedError({ message: err.message }))
+        new MappedError({ message: err.message })
     ),
 )
 ```

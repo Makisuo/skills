@@ -223,7 +223,7 @@ export class UserServiceInMemory extends Effect.Service<UserService>()("UserServ
         return {
             findById: Effect.fn("UserService.findById")(function* (id) {
                 const user = store.get(id)
-                if (!user) return yield* Effect.fail(new UserNotFoundError({ userId: id }))
+                if (!user) return yield* new UserNotFoundError({ userId: id })
                 return user
             }),
             create: Effect.fn("UserService.create")(function* (input) {
@@ -270,7 +270,7 @@ const ValidatedConfigLive = Layer.unwrapEffect(
 
         // Validate config
         if (!config.dbUrl.startsWith("postgresql://")) {
-            return yield* Effect.fail(new ConfigError({ message: "Invalid DATABASE_URL" }))
+            return yield* new ConfigError({ message: "Invalid DATABASE_URL" })
         }
 
         return Layer.succeed(AppConfig, config)

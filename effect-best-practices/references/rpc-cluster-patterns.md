@@ -137,15 +137,12 @@ export const AuthMiddlewareLive = Layer.effect(
                     const token = request.headers.get("authorization")?.replace("Bearer ", "")
 
                     if (!token) {
-                        return yield* Effect.fail(new UnauthorizedError({ message: "Missing token" }))
+                        return yield* new UnauthorizedError({ message: "Missing token" })
                     }
 
                     const user = yield* authService.validateToken(token).pipe(
-                        Effect.catchTag("TokenExpiredError", () =>
-                            Effect.fail(new UnauthorizedError({ message: "Token expired" }))
-                        ),
-                        Effect.catchTag("TokenInvalidError", () =>
-                            Effect.fail(new UnauthorizedError({ message: "Invalid token" }))
+                        Effect.catchTag("TokenExpiredError", "TokenInvalidError", () =>
+                            new UnauthorizedError({ message: "Invalid or expired token" })
                         ),
                     )
 
@@ -309,7 +306,7 @@ yield* Activity.make({
     execute: Effect.gen(function* () {
         const response = yield* fetch(url)
         if (!response.ok) {
-            return yield* Effect.fail(ExternalApiError.fromResponse(response))
+            return yield* ExternalApiError.fromResponse(response)
         }
         return yield* response.json()
     }),
@@ -420,7 +417,7 @@ const executeWorkflowHandler = Effect.gen(function* () {
 
     const workflow = client.workflows[name]
     if (!workflow) {
-        return yield* Effect.fail(new WorkflowNotFoundError({ name }))
+        return yield* new WorkflowNotFoundError({ name })
     }
 
     const result = yield* workflow.execute(payload)

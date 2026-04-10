@@ -77,10 +77,10 @@ export class OrderService extends Effect.Service<OrderService>()("OrderService",
             const available = yield* inventory.checkAvailability(input.productId, input.quantity)
 
             if (!available) {
-                return yield* Effect.fail(new InsufficientInventoryError({
+                return yield* new InsufficientInventoryError({
                     productId: input.productId,
                     message: "Not enough inventory",
-                }))
+                })
             }
 
             // Create order...
@@ -397,7 +397,7 @@ const findById = Effect.fn("UserService.findById")(
     function* (id: UserId): Effect.Effect<User, UserNotFoundError> {
         const maybeUser = yield* repo.findById(id)
         return yield* Option.match(maybeUser, {
-            onNone: () => Effect.fail(new UserNotFoundError({ userId: id, message: "Not found" })),
+            onNone: () => new UserNotFoundError({ userId: id, message: "Not found" }),
             onSome: Effect.succeed,
         })
     }
@@ -432,7 +432,7 @@ export class UserServiceTest extends Effect.Service<UserService>()("UserService"
 
         const findById = Effect.fn("UserService.findById")(function* (id: UserId) {
             const user = users.get(id)
-            if (!user) return yield* Effect.fail(new UserNotFoundError({ userId: id, message: "Not found" }))
+            if (!user) return yield* new UserNotFoundError({ userId: id, message: "Not found" })
             return user
         })
 

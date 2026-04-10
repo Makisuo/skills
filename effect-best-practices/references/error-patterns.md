@@ -40,15 +40,13 @@ export class NotFoundError extends Schema.TaggedError<NotFoundError>()(
   HttpApiSchema.annotations({ status: 404 }),
 ) {}
 
-// At API boundaries:
-Effect.catchTags({
-  UserNotFoundError: (err) =>
-    Effect.fail(new NotFoundError({ message: "Not found" })),
-  ChannelNotFoundError: (err) =>
-    Effect.fail(new NotFoundError({ message: "Not found" })),
-  MessageNotFoundError: (err) =>
-    Effect.fail(new NotFoundError({ message: "Not found" })),
-});
+// At API boundaries - collapsing to generic error AND using catchTags with duplicate handlers:
+Effect.catchTag(
+  "UserNotFoundError",
+  "ChannelNotFoundError",
+  "MessageNotFoundError",
+  (err) => new NotFoundError({ message: "Not found" }),
+);
 
 // Frontend receives: { _tag: "NotFoundError", message: "Not found" }
 // - Can't show specific message ("User doesn't exist" vs "Channel was deleted")
@@ -145,6 +143,32 @@ export class SessionExpiredError extends Schema.TaggedError<SessionExpiredError>
 2. **Type safety** - `_tag` discriminator enables `catchTag`
 3. **Consistent structure** - All errors have predictable shape
 4. **HTTP status mapping** - Via `HttpApiSchema.annotations`
+5. **Yieldable** - Can be used directly without `Effect.fail` wrapper
+
+### TaggedErrors Are Yieldable
+
+`Schema.TaggedError` instances implement the `Effect` interface, so they can be yielded or returned directly — no `Effect.fail(...)` wrapper needed:
+
+```typescript
+// ✅ CORRECT - TaggedErrors are yieldable
+yield* new UserNotFoundError({ userId: id, message: "Not found" })
+
+// ❌ UNNECESSARY - Effect.fail wrapper is redundant for TaggedErrors
+yield* Effect.fail(new UserNotFoundError({ userId: id, message: "Not found" }))
+
+// Works in catchTag handlers too:
+Effect.catchTag("DatabaseError", (err) =>
+  new UserNotFoundError({ userId: id, message: err.message }),
+)
+
+// And in Option.match:
+Option.match(maybeUser, {
+  onNone: () => new UserNotFoundError({ userId, message: "Not found" }),
+  onSome: Effect.succeed,
+})
+```
+
+> **Note:** Only `Schema.TaggedError` instances are yieldable. Plain `Error` objects still require `Effect.fail()`.
 
 ### Basic Error Definition
 
@@ -206,18 +230,46 @@ Every error should have:
 const findUser = Effect.fn("UserService.findUser")(function* (id: UserId) {
   return yield* repo.findById(id).pipe(
     Effect.catchTag("DatabaseError", (err) =>
-      Effect.fail(
-        new UserNotFoundError({
-          userId: id,
-          message: `Database lookup failed: ${err.message}`,
-        }),
-      ),
+      new UserNotFoundError({
+        userId: id,
+        message: `Database lookup failed: ${err.message}`,
+      }),
     ),
   );
 });
 ```
 
-### catchTags for Multiple Error Types
+### catchTag with Multiple Tags (Same Handler)
+
+`Effect.catchTag` accepts **multiple tag strings** before the handler. When several error types should map to the same handler, pass all tags to a single `catchTag` call instead of using `catchTags` with duplicate handler bodies:
+
+```typescript
+// ✅ CORRECT - multiple tags, single handler via catchTag
+yield* effect.pipe(
+    Effect.catchTag(
+      "TokenExpiredError",
+      "TokenInvalidError",
+      "MissingTokenError",
+      () => new UnauthorizedError({ message: "Authentication failed" }),
+    ),
+  );
+
+// ❌ WRONG - catchTags with duplicate handlers (unnecessary boilerplate)
+yield* effect.pipe(
+    Effect.catchTags({
+      TokenExpiredError: () =>
+        new UnauthorizedError({ message: "Authentication failed" }),
+      TokenInvalidError: () =>
+        new UnauthorizedError({ message: "Authentication failed" }),
+      MissingTokenError: () =>
+        new UnauthorizedError({ message: "Authentication failed" }),
+    }),
+  );
+```
+
+### catchTags for Multiple Error Types (Different Handlers)
+
+Use `catchTags` only when each tag needs a **distinct** handler:
 
 ```typescript
 const processOrder = Effect.fn("OrderService.processOrder")(function* (
@@ -226,26 +278,20 @@ const processOrder = Effect.fn("OrderService.processOrder")(function* (
   return yield* validateAndProcess(input).pipe(
     Effect.catchTags({
       ValidationError: (err) =>
-        Effect.fail(
-          new OrderValidationError({
-            message: err.message,
-            field: err.field,
-          }),
-        ),
+        new OrderValidationError({
+          message: err.message,
+          field: err.field,
+        }),
       PaymentError: (err) =>
-        Effect.fail(
-          new OrderPaymentError({
-            message: `Payment failed: ${err.message}`,
-            code: err.code,
-          }),
-        ),
+        new OrderPaymentError({
+          message: `Payment failed: ${err.message}`,
+          code: err.code,
+        }),
       InventoryError: (err) =>
-        Effect.fail(
-          new OrderInventoryError({
-            productId: err.productId,
-            message: "Insufficient inventory",
-          }),
-        ),
+        new OrderInventoryError({
+          productId: err.productId,
+          message: "Insufficient inventory",
+        }),
     }),
   );
 });
@@ -258,7 +304,7 @@ const processOrder = Effect.fn("OrderService.processOrder")(function* (
 yield *
   effect.pipe(
     Effect.catchAll((err) =>
-      Effect.fail(new InternalServerError({ message: "Something failed" })),
+      new InternalServerError({ message: "Something failed" }),
     ),
   );
 
@@ -282,21 +328,17 @@ export const withRemapDbErrors = <A, E, R>(
 ): Effect.Effect<A, E | EntityNotFoundError | ServiceUnavailableError, R> =>
   effect.pipe(
     Effect.catchTag("DatabaseError", (err) =>
-      Effect.fail(
-        new EntityNotFoundError({
-          entityType: context.entityType,
-          entityId: context.entityId,
-          message: `${context.entityType} not found`,
-        }),
-      ),
+      new EntityNotFoundError({
+        entityType: context.entityType,
+        entityId: context.entityId,
+        message: `${context.entityType} not found`,
+      }),
     ),
     Effect.catchTag("ConnectionError", (err) =>
-      Effect.fail(
-        new ServiceUnavailableError({
-          message: "Database connection unavailable",
-          cause: err.message,
-        }),
-      ),
+      new ServiceUnavailableError({
+        message: "Database connection unavailable",
+        cause: err.message,
+      }),
     ),
   );
 
@@ -448,14 +490,12 @@ export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()(
 ) {}
 
 // Then mapping everything to it - loses critical information!
-Effect.catchTags({
-  SessionExpiredError: (err) =>
-    Effect.fail(new UnauthorizedError({ message: "Unauthorized" })),
-  InvalidCredentialsError: (err) =>
-    Effect.fail(new UnauthorizedError({ message: "Unauthorized" })),
-  MissingTokenError: (err) =>
-    Effect.fail(new UnauthorizedError({ message: "Unauthorized" })),
-});
+Effect.catchTag(
+  "SessionExpiredError",
+  "InvalidCredentialsError",
+  "MissingTokenError",
+  (err) => new UnauthorizedError({ message: "Unauthorized" }),
+);
 // Frontend can't distinguish: expired session vs wrong password vs missing token
 ```
 
@@ -477,12 +517,10 @@ export class InternalServerError extends Schema.TaggedError<InternalServerError>
 
 // Use sparingly - only for truly unexpected errors
 Effect.catchAll((unexpectedError) =>
-  Effect.fail(
-    new InternalServerError({
-      message: "An unexpected error occurred",
-      requestId: context.requestId,
-    }),
-  ),
+  new InternalServerError({
+    message: "An unexpected error occurred",
+    requestId: context.requestId,
+  }),
 );
 ```
 
