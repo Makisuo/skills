@@ -302,7 +302,30 @@ const AppLive = Layer.mergeAll(
 );
 ```
 
-See `references/layer-patterns.md` for testing layers and config-dependent layers.
+**Layer composition patterns:**
+
+```typescript
+// Use Layer.mergeAll for flat composition of same-level layers
+const RepoLive = Layer.mergeAll(
+    UserRepo.Default,
+    OrderRepo.Default,
+    ProductRepo.Default,
+)
+
+// Use Layer.provideMerge for incremental chaining (flatter types than Layer.provide)
+const MainLive = DatabaseLive.pipe(
+    Layer.provideMerge(ConfigServiceLive),
+    Layer.provideMerge(LoggerLive),
+    Layer.provideMerge(CacheLive),
+)
+```
+
+**Why layers over `Effect.provide`:**
+- **Deduplication**: Layers memoize construction - same service instantiated once. `Effect.provide` creates new instances each call.
+- **TypeScript performance**: Deep `Layer.provide` nesting creates complex recursive types that slow the LSP. `Layer.mergeAll` and `Layer.provideMerge` produce flatter types.
+- **Resource management**: Scoped layers properly share and clean up resources.
+
+See `references/layer-patterns.md` for testing layers, config-dependent layers, and the `layerConfig` pattern.
 
 ## Option Handling
 
@@ -395,7 +418,20 @@ const scrollYAtom = Atom.make((get) => {
 }).pipe(Atom.keepAlive);
 ```
 
-See `references/effect-atom-patterns.md` for complete patterns including families, localStorage, and anti-patterns.
+### React Mutations
+
+For mutation atoms, derive loading state from `result.waiting` instead of `useState`:
+
+```typescript
+const [result, mutate] = useAtom(deleteMutation, { mode: "promise" })
+const isLoading = result.waiting // Updates automatically, no useState/finally needed
+```
+
+**Dialog ownership:** Move mutation logic into dialog components. Dialog owns the mutation hook, loading state, and toasts. Parent provides data props and an `onSuccess` callback.
+
+**Cache invalidation:** Use `reactivityKeys` on both mutation and query atoms to auto-invalidate queries after mutations — replaces manual `refresh()` calls.
+
+See `references/effect-atom-patterns.md` for complete patterns including families, localStorage, mutations, and anti-patterns.
 
 ## RPC & Cluster Patterns
 
@@ -458,7 +494,8 @@ See `references/observability-patterns.md` for metrics and tracing patterns.
 
 For detailed patterns, consult these reference files in the `references/` directory:
 
-- `service-patterns.md` - Service definition, Effect.fn, Context.Tag exceptions, capability-based services
+- `language-server.md` - Effect Language Service setup, diagnostics, refactors, CLI tools
+- `service-patterns.md` - Service definition, Effect.fn, Context.Tag exceptions
 - `error-patterns.md` - Schema.TaggedError, error remapping, retry patterns
 - `schema-patterns.md` - Branded types, transforms, Schema.Class
 - `layer-patterns.md` - Dependency composition, testing layers, merge vs provide
