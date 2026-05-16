@@ -3,52 +3,158 @@ name: effect-review-v4
 description: >-
   This skill should be used when the user asks to "review effect v4 code",
   "effect v4 review", "review my effect 4 code", "check effect v4 patterns",
-  "run effect v4 review", or wants a comprehensive code review of an Effect v4
-  (effect-smol / the 4.0 beta line) codebase against v4 conventions for
-  Context.Service, Layer composition, Schema.TaggedErrorClass, the flattened
-  Cause, Effect.fn, branded Schema types, observability, effect-atom, and test
-  coverage. For Effect v3 codebases, use the effect-review skill instead.
-version: 1.0.0
+  "run effect v4 review", "audit the effect codebase", or wants a comprehensive
+  code review of an Effect v4 (effect-smol / the 4.0 beta line) codebase against
+  v4 conventions for Context.Service, Layer composition, Schema.TaggedErrorClass,
+  the flattened Cause, Effect.fn, branded Schema types, observability,
+  effect-atom, and test coverage. Supports reviewing a PR/branch diff or the
+  whole repository. For Effect v3 codebases, use the effect-review skill instead.
+version: 2.0.0
 ---
 
 # Effect v4 Code Review
 
-Orchestrate a multi-agent review of code changes against **Effect v4**
-("effect-smol", the `effect@4.0.0-beta.*` line) best practices.
+Orchestrate a multi-agent review against **Effect v4** ("effect-smol", the
+`effect@4.0.0-beta.*` line) best practices.
 
 Effect v4 is a structural rewrite. Services, errors, `Cause`, and `Schema` all
 changed shape. This skill checks that v4 code follows **v4 conventions** — it
 does not hunt for leftover v3 APIs. If the codebase is on Effect v3, use the
 `effect-review` skill instead.
 
-## Workflow
+## Step 0: Determine Review Mode
 
-### Step 1: Discover Changed Files
+The skill has two modes:
+
+- **PR mode** — review only the files changed on the current branch / PR.
+- **Repo mode** — review the entire repository, fanning out across a large
+  number of subagents.
+
+Pick the mode from the user's request:
+
+- PR mode signals: "review my PR", "review my changes", "review this branch",
+  "review the diff", a PR number/URL.
+- Repo mode signals: "review the whole repo", "review the codebase", "audit the
+  repo", "review everything", "full codebase review".
+
+**If the request does not clearly indicate which mode, ask the user with the
+`AskUserQuestion` tool** before doing anything else. Offer the two options:
+
+- *PR / branch diff* — "Review only the files changed on the current branch."
+- *Whole repository* — "Review every Effect file in the repo (slower, uses many
+  parallel subagents)."
+
+Do not guess. Once the mode is known, follow the matching workflow below.
+
+---
+
+## Mode A: PR Review
+
+### A1. Discover Changed Files
 
 Run `git diff --name-only main...HEAD` to find all changed files on the current
 branch. If that fails (e.g., on main), fall back to `git diff --name-only HEAD~1`
-or `git diff --name-only` for unstaged changes.
+or `git diff --name-only` for unstaged changes. If the user gave a PR number,
+use `gh pr diff <number> --name-only`.
 
 List the changed files for the user.
 
-### Step 2: Categorize Files
+### A2. Categorize Files
 
-Split files into categories:
+Apply the **shared categorization rules** (see "File Categorization" below).
+
+### A3. Launch Sub-Agents in Parallel
+
+Launch one agent per concern, each scoped to all changed files of the relevant
+category. Launch every applicable agent in a **single message** for maximum
+parallelism. Use the **shared reviewer roster** and **shared agent prompt**
+below.
+
+For a PR, this is typically 5 backend + 1 test + 1 UI = up to 7 agents.
+
+### A4. Unified Report
+
+Compile results using the **shared report format** below.
+
+---
+
+## Mode B: Whole-Repo Review
+
+Repo mode reviews the entire codebase. The goal is **maximum parallelism**:
+shard the repo into many small file groups and launch a dedicated subagent for
+every (shard × concern) pair. Expect to launch **dozens of subagents** — this is
+intended.
+
+### B1. Discover All Effect Source Files
+
+List every TypeScript source file tracked by git, excluding noise:
+
+```
+git ls-files '*.ts' '*.tsx' \
+  ':!:**/node_modules/**' ':!:**/dist/**' ':!:**/build/**' \
+  ':!:**/*.gen.ts' ':!:**/routeTree.gen.ts'
+```
+
+Report the total file count to the user before fanning out.
+
+### B2. Categorize and Shard
+
+First categorize every file with the **shared categorization rules** below.
+Then **shard** each category into small groups:
+
+- **Shard size: 6–10 files per shard.** Smaller shards = more subagents = more
+  parallelism and smaller per-agent context. Prefer grouping files from the
+  same directory into a shard so each subagent reviews a coherent area.
+- Compute shards separately for backend, test, and UI files.
+- Example: 240 backend files → ~30 backend shards; 90 test files → ~12 test
+  shards; 60 UI files → ~8 UI shards.
+
+State the shard plan to the user, e.g. "30 backend shards × 5 reviewers = 150
+backend agents, 12 test agents, 8 UI agents — 170 subagents total."
+
+### B3. Fan Out — Launch Many Sub-Agents
+
+For **every backend shard**, launch all **5 backend reviewers** (see roster
+below), each scoped to that shard's files. For every test shard, launch the
+`test-reviewer`. For every UI shard, launch the `atom-reviewer`.
+
+This produces `backendShards × 5 + testShards + uiShards` subagents. **Launch
+them aggressively in parallel**, in waves:
+
+- Put as many `Agent` tool calls as possible in a **single message** (a wave of
+  ~10–15 agents).
+- Send wave after wave until every shard × concern pair has been dispatched.
+- Do not review files yourself in the main thread — all reading and analysis
+  happens inside subagents. The main thread only shards, dispatches, and
+  aggregates.
+
+Use the **shared agent prompt** below for each agent.
+
+### B4. Aggregate
+
+Collect findings from every subagent. Merge them **by concern category** (all
+`effect-fn` findings together, all `services-layers` findings together, etc.),
+preserving each finding's `file:line`. De-duplicate identical findings reported
+by overlapping shards. Then compile the **shared report format** below — the
+summary table counts every finding across the whole repo.
+
+For repo mode, also add a short **"Top offenders"** subsection listing the 5–10
+files with the most Critical findings.
+
+---
+
+## Shared: File Categorization
 
 - **Backend Effect files**: `.ts` files NOT ending in `.test.ts`, NOT config
-  files (`.config.ts`, `tsconfig`, etc.), NOT generated files
-  (`routeTree.gen.ts`, barrel `index.ts`).
+  files (`.config.ts`, `tsconfig`, `vitest.*`, etc.), NOT generated files
+  (`*.gen.ts`, `routeTree.gen.ts`, barrel `index.ts`).
 - **Test files**: `.test.ts` files.
 - **UI files**: `.tsx` files.
 - **Skip**: `.md`, `.json`, `.yml`, `.css`, config files, generated files.
 
-### Step 3: Launch Sub-Agents in Parallel
+## Shared: Reviewer Roster
 
-Based on which categories have files, launch the appropriate agents using the
-Agent tool. Launch all applicable agents in a **single message** for maximum
-parallelism.
-
-**If backend Effect files exist**, launch these 5 agents in parallel:
+**Backend reviewers** (run on backend `.ts` files):
 
 - `effect-fn-reviewer` — `Effect.fn` / `Effect.fnUntraced` usage, generator
   style, `return yield*`, no try/catch or async/await, no `Date.now`, plus
@@ -64,28 +170,15 @@ parallelism.
 - `observability-reviewer` — `Effect.fn` / `withSpan` tracing,
   `annotateCurrentSpan`, structured `Effect.log*`, OTLP setup.
 
-**If test files exist**, launch:
+**Test reviewer** (runs on `.test.ts` files):
 
 - `test-reviewer` — `@effect/vitest` patterns (`it.effect`, `assert`,
   `it.layer`, `TestClock`) and coverage gaps.
 
-**If UI files exist**, launch:
+**UI reviewer** (runs on `.tsx` files):
 
 - `atom-reviewer` — effect-atom usage (`Atom.make` at module scope, `useAtom`
   family, `Result` handling, `keepAlive`).
-
-For each agent, provide the prompt:
-
-> Review the following files for [agent's specialty] against Effect v4
-> conventions. Read each file and produce a structured report with
-> Critical/Warning/Info findings, each citing `file:line`.
->
-> Files to review:
-> - [list of file paths]
->
-> Also read the reference guide at `references/[relevant-reference].md`
-> (relative to this skill) for the detailed v4 checklist. Treat every "GOOD"
-> example there as the v4-correct form.
 
 Agent → reference guide mapping:
 
@@ -97,33 +190,50 @@ Agent → reference guide mapping:
 - `test-reviewer` → `references/test-patterns.md`
 - `atom-reviewer` → `references/effect-atom.md`
 
-### Step 4: Unified Report
+## Shared: Agent Prompt
+
+For each agent, provide this prompt:
+
+> Review the following files for [agent's specialty] against Effect v4
+> conventions. Read each file and produce a structured report with
+> Critical/Warning/Info findings, each citing `file:line`.
+>
+> Files to review:
+> - [list of file paths in this shard]
+>
+> Also read the reference guide(s) at `references/[relevant-reference].md`
+> (relative to this skill) for the detailed v4 checklist. Treat every "GOOD"
+> example there as the v4-correct form. Report only findings — do not edit code.
+
+## Shared: Unified Report
 
 After all agents complete, compile results into a single report:
 
 ```
-# Effect v4 Review Report
+# Effect v4 Review Report — [PR <name> | Whole Repo]
+
+Scope: [N changed files | N files across M shards, K subagents]
 
 ## Effect.fn & Generators
-[agent output]
+[merged agent output]
 
 ## Services & Layers
-[agent output]
+[merged agent output]
 
 ## Errors & Cause
-[agent output]
+[merged agent output]
 
 ## Schema
-[agent output]
+[merged agent output]
 
 ## Observability
-[agent output]
+[merged agent output]
 
 ## Test Coverage
-[agent output]
+[merged agent output]
 
 ## Effect Atom (UI)
-[agent output]
+[merged agent output]
 
 ---
 
@@ -139,6 +249,9 @@ After all agents complete, compile results into a single report:
 | Tests               | X        | Y       | Z    |
 | Effect Atom         | X        | Y       | Z    |
 | **Total**           | **X**    | **Y**   | **Z**|
+
+[Repo mode only] ## Top Offenders
+[5–10 files with the most Critical findings]
 
 **Verdict**: PASS / NEEDS WORK / FAIL
 
@@ -164,6 +277,10 @@ After compiling all findings, assign an overall score from 0 to 10:
 - **2**: Very poor — majority of code ignores Effect v4 patterns
 - **1**: Minimal compliance — almost no Effect v4 patterns followed
 - **0**: No compliance — entirely non-Effect code submitted as Effect code
+
+For repo mode, judge the score on the **density** of findings (criticals per
+file reviewed), not the raw count — a large repo will naturally accumulate more
+findings than a single PR.
 
 Display the score prominently at the end of the report.
 
