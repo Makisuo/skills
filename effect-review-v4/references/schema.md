@@ -26,14 +26,15 @@ All runtime validation should use `Schema` — no Zod, no manual `typeof` /
 `instanceof` guards for parsing. Use `Schema.NullOr(S)` for response fields
 that are present-but-nullable (distinct from optional).
 
-## 2. `Schema.Class` Values Are Constructed with `new`
+## 2. `Schema.Class` Values Are Constructed with `new` — at the Top Level
 
-Anywhere a payload/params/document is *typed as a `Schema.Class`* — HTTP client
-mutations, domain document rebuilds — it must be constructed with
-`new ClassName({...})`. Class encoders check class identity, not just shape: a
-plain object literal fails with `Expected ClassName, got {...}`, and in HTTP
-clients that failure is typically converted to a **defect** (`Effect.die`), so
-the caller sees a generic error with **no network request made**.
+Anywhere a value *typed as a `Schema.Class`* reaches an **encoder** — HTTP
+client mutation payloads, response encoding — the top-level value must be a
+real instance (`new ClassName({...})`). Class encoders check class identity,
+not just shape: a wholly-plain object fails with `Expected ClassName, got
+{...}`, and in HTTP clients that failure is typically converted to a **defect**
+(`Effect.die`), so the caller sees a generic error with **no network request
+made**.
 
 ```typescript
 // GOOD
@@ -43,7 +44,13 @@ mutate({ payload: new ErrorIssueTransitionRequest({ toState }) })
 mutate({ payload: { toState } })
 ```
 
-Flag plain-object literals passed where the declared schema is a class.
+**Nested class fields are NOT a violation** (verified empirically on beta.93):
+the class constructor's `make` recursively **constructs** nested class values
+from plain literals — `new Response({ items: [{ name: "x" }] })` produces real
+`Item` instances and encodes fine. Only flag a **plain top-level object**
+handed to an encoder; do not flag plain literals for nested class fields under
+a `new` outer constructor. (A past review reported this as a Critical and was
+wrong.)
 
 ## 3. Never Name a Field After an Effect Prototype Member (`pipe`)
 

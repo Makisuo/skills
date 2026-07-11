@@ -101,10 +101,12 @@ else toast.error(getExitErrorMessage(exit, "Failed to create rule"))
 
 Two paired rules:
 
-- **`Schema.Class` payloads need `new`** — `payload: new UpdateRequest({...})`.
-  A plain object fails the client encoder (class identity check) and dies as a
-  defect **before any network request**; the UI sees only a generic failure.
-  See `schema.md` §2.
+- **`Schema.Class` payloads need `new` at the top level** — `payload: new
+  UpdateRequest({...})`. A wholly-plain object fails the client encoder (class
+  identity check) and dies as a defect **before any network request**; the UI
+  sees only a generic failure. Nested class fields inside a `new` outer
+  constructor are auto-constructed from plain literals — don't flag those. See
+  `schema.md` §2.
 - **`reactivityKeys` must pair** — the keys passed with a mutation must match
   the keys registered on the query atoms it invalidates, or the UI goes stale
   after writes.
