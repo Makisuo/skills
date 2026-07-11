@@ -3,7 +3,26 @@
 Effect v4 idiom: write effectful code with `Effect.gen` and `Effect.fn("name")`,
 then attach extra behaviour with combinators.
 
-## 1. Functions Returning an Effect Use `Effect.fn`
+## 1. APIs That Do NOT Exist in the v4 Beta ⚠️
+
+Never recommend these — and recognize the confusing errors they produce when
+someone writes them from v3 muscle memory. When unsure whether an API exists,
+grep the repo's vendored Effect source (the ground-truth path from the repo
+conventions pass); do not trust memory.
+
+| v3 habit | v4 reality | Symptom if used anyway |
+|---|---|---|
+| `Effect.fork` | `Effect.forkChild` (scoped), `Effect.forkScoped`, `Effect.forkDetach` (daemon), `Effect.forkIn` | `Effect.fork` is `undefined` → "not iterable" at runtime |
+| `Effect.iterate` / `Effect.loop` | absent — imperative `while (true)` loop (with a comment) is the accepted form | TS2339 |
+| `Effect.catchAll` | `Effect.catch` | TS2339 on `catchAll` **plus** cascading `unknown`/`never` iterator errors on the surrounding `yield*` |
+| `Effect.timeoutFail` | `Effect.timeoutOrElse({ duration, orElse })` | TS2339 |
+| `Effect.try(() => ...)` bare thunk | `Effect.try({ try, catch })` object form only (`Effect.sync` is still bare-thunk) | TS2345 "not assignable to `{ try; catch }`" |
+
+Platform note: `FileSystem` / `Path` are core modules (`effect/FileSystem`,
+`effect/Path`) with **bare tags** — `yield* FileSystem`, not
+`FileSystem.FileSystem` from `@effect/platform`.
+
+## 2. Functions Returning an Effect Use `Effect.fn`
 
 A function that returns an Effect should be wrapped with `Effect.fn` (named,
 traced) or `Effect.fnUntraced` (no span). **Do not** write a plain function that
@@ -11,12 +30,12 @@ returns a bare `Effect.gen` — it loses the stack frame and tracing span.
 
 ```typescript
 // GOOD — named + traced
-export const fetchUser = Effect.fn("fetchUser")(function* (id: UserId) {
+export const fetchUser = Effect.fn("UserService.fetchUser")(function* (id: UserId) {
   const repo = yield* UserRepo
   return yield* repo.findById(id)
 })
 
-// GOOD — hot path / no span wanted
+// GOOD — pure validator / row mapper / hot path: no span wanted
 const parseRow = Effect.fnUntraced(function* (raw: string) {
   return yield* decodeRow(raw)
 })
@@ -29,13 +48,17 @@ const fetchUser = (id: UserId) =>
   })
 ```
 
-The name string passed to `Effect.fn` should match the function name (or
-`"Service.method"` for service methods).
+The name string becomes the span name — use `"Service.method"` for service
+methods. A module-level `Effect.fn` const sometimes needs an explicit
+return-type annotation (`: (...) => Effect.Effect<A, E, R> = Effect.fn(...)`)
+when inference cycles through the module.
 
-## 2. Attach Combinators as `Effect.fn` Arguments
+## 3. Attach Combinators as `Effect.fn` Arguments
 
 Extra behaviour (`Effect.catch`, `Effect.annotateLogs`, `Effect.withSpan`, …)
 goes as **additional arguments** to `Effect.fn`, not `.pipe` on the result.
+The trailing pipeables receive **`(effect, ...originalArgs)`** — so a per-call
+handler that needs the function's input takes it as its second parameter:
 
 ```typescript
 // GOOD
@@ -47,6 +70,13 @@ export const effectFn = Effect.fn("effectFn")(
   Effect.annotateLogs({ method: "effectFn" }),
 )
 
+// GOOD — pipeable that uses the original argument
+export const process = Effect.fn("process")(
+  function* (input: Input) { ... },
+  (effect, input) => Effect.catchCause(effect, (cause) =>
+    Effect.logError("process failed", { input: input.id, cause })),
+)
+
 // BAD — .pipe on the wrapped fn
 export const effectFn = Effect.fn("effectFn")(function* (n: number) {
   return yield* doWork(n)
@@ -55,7 +85,7 @@ export const effectFn = Effect.fn("effectFn")(function* (n: number) {
 
 A standalone `Effect.gen` block, by contrast, *is* extended with `.pipe`.
 
-## 3. `return yield*` When Raising Errors
+## 4. `return yield*` When Raising Errors
 
 Always `return` when yielding a terminal effect (an error, `Effect.fail`,
 `Effect.interrupt`) so TypeScript understands the generator stops there.
@@ -78,7 +108,7 @@ Effect.gen(function* () {
 })
 ```
 
-## 4. No `try` / `catch`
+## 5. No `try` / `catch`
 
 Effect code never uses `try`/`catch`. Move errors into the Effect error channel.
 
@@ -100,7 +130,7 @@ try {
 }
 ```
 
-## 5. No `async` / `await`
+## 6. No `async` / `await`
 
 Service methods and Effect functions return `Effect`, never `Promise`. No
 `async`/`await` inside Effect implementations. Bridge Promise APIs with
@@ -114,21 +144,25 @@ const load = async (id: string) => {
 }
 ```
 
-## 6. `Clock` Over `Date.now` / `new Date`
+## 7. `Clock` Over `Date.now` / `new Date` — Inside the Effect Runtime
 
-Never read wall-clock time directly with `Date.now()` or `new Date()`. Use the
-`Clock` module so time is testable (`TestClock` in tests).
+Inside Effect code (services, handlers, generators), read time via the `Clock`
+module so it is testable (`TestClock` in tests).
 
 ```typescript
 // GOOD
 const now = yield* Clock.currentTimeMillis
 
-// BAD
+// BAD — inside an Effect generator/service
 const now = Date.now()
 const ts = new Date()
 ```
 
-## 7. `Effect.gen` with `this` Uses the Options Object
+Scope: this rule applies to code running **inside the Effect runtime**.
+`Date.now()` in outer non-Effect glue — a raw platform handler timing a
+diagnostic, a plain script — is fine; don't flag it.
+
+## 8. `Effect.gen` with `this` Uses the Options Object
 
 When a generator needs `this`, v4 takes an options object — not a bare `self`
 first argument.
@@ -148,8 +182,12 @@ compute = Effect.gen(this, function* () {
 })
 ```
 
-## 8. Prefer `Effect.gen` / `Effect.fn` Over Bare Combinator Chains
+## 9. Prefer `Effect.gen` / `Effect.fn` Over Bare Combinator Chains
 
 Imperative generator style is the v4 default — it reads like async/await and is
 easier to maintain than long `.pipe(Effect.flatMap(...), Effect.map(...))`
 chains. Reserve combinators for cross-cutting concerns layered onto a generator.
+
+Corollary (see `known-pitfalls.md`): genuine control-flow loops — cursor
+pagination, CAS-retry, poll-until-hit, accumulate-then-fail — stay as imperative
+`while` loops in v4 (no `iterate`/`loop`), ideally with a comment saying so.
