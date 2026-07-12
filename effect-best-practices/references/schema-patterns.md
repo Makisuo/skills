@@ -1,29 +1,44 @@
 # Schema Patterns
 
+## Table of Contents
+
+- [Branded Types for IDs](#branded-types-for-ids)
+- [Schema.Struct for Domain Types](#schemastruct-for-domain-types)
+- [Schema.transform and transformOrFail](#schematransform-and-transformorfail)
+- [Schema.Class for Entities with Methods](#schemaclass-for-entities-with-methods)
+- [Schema.annotations](#schemaannotations)
+- [Optional Fields](#optional-fields)
+- [Union Types and Discriminated Unions](#union-types-and-discriminated-unions)
+- [Enums and Literals](#enums-and-literals)
+- [Recursive Schemas](#recursive-schemas)
+- [Decoding and Encoding](#decoding-and-encoding)
+- [JSON Encoding & Decoding](#json-encoding--decoding)
+
 ## Branded Types for IDs
 
 **Always brand entity IDs** to prevent accidentally passing the wrong ID type:
 
 ```typescript
-import { Schema } from "effect"
+import { Schema } from "effect";
 
 // Entity IDs - always branded with namespace
-export const UserId = Schema.UUID.pipe(Schema.brand("@App/UserId"))
-export type UserId = Schema.Schema.Type<typeof UserId>
+export const UserId = Schema.UUID.pipe(Schema.brand("@App/UserId"));
+export type UserId = Schema.Schema.Type<typeof UserId>;
 
-export const OrganizationId = Schema.UUID.pipe(Schema.brand("@App/OrganizationId"))
-export type OrganizationId = Schema.Schema.Type<typeof OrganizationId>
+export const OrganizationId = Schema.UUID.pipe(Schema.brand("@App/OrganizationId"));
+export type OrganizationId = Schema.Schema.Type<typeof OrganizationId>;
 
-export const OrderId = Schema.UUID.pipe(Schema.brand("@App/OrderId"))
-export type OrderId = Schema.Schema.Type<typeof OrderId>
+export const OrderId = Schema.UUID.pipe(Schema.brand("@App/OrderId"));
+export type OrderId = Schema.Schema.Type<typeof OrderId>;
 
-export const ProductId = Schema.UUID.pipe(Schema.brand("@App/ProductId"))
-export type ProductId = Schema.Schema.Type<typeof ProductId>
+export const ProductId = Schema.UUID.pipe(Schema.brand("@App/ProductId"));
+export type ProductId = Schema.Schema.Type<typeof ProductId>;
 ```
 
 ### Branding Convention
 
 Use `@Namespace/EntityName` format:
+
 - `@App/UserId` - Main application entities
 - `@Billing/InvoiceId` - Billing domain entities
 - `@External/StripeCustomerId` - External system IDs
@@ -32,13 +47,15 @@ Use `@Namespace/EntityName` format:
 
 ```typescript
 // From string (validates UUID format)
-const userId = Schema.decodeSync(UserId)("123e4567-e89b-12d3-a456-426614174000")
+const userId = Schema.decodeSync(UserId)(
+  "123e4567-e89b-12d3-a456-426614174000",
+);
 
 // Generate new ID
-const newUserId = UserId.make(crypto.randomUUID())
+const newUserId = UserId.make(crypto.randomUUID());
 
 // Type error - can't mix ID types
-const order = yield* orderService.findById(userId) // Error: UserId is not OrderId
+const order = yield * orderService.findById(userId); // Error: UserId is not OrderId
 ```
 
 ### When NOT to Brand
@@ -47,9 +64,8 @@ Don't brand simple strings that don't need type safety:
 
 ```typescript
 // NOT branded - acceptable
-export const Url = Schema.String
-export const FilePath = Schema.String
-export const EmailAddress = Schema.String.pipe(Schema.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/))
+export const Url = Schema.String;
+export const FilePath = Schema.String;
 
 // These don't need branding because:
 // 1. They don't cross service boundaries in ways that could be confused
@@ -61,47 +77,43 @@ export const EmailAddress = Schema.String.pipe(Schema.pattern(/^[^\s@]+@[^\s@]+\
 **Prefer Schema.Struct** over TypeScript interfaces for domain types:
 
 ```typescript
-// CORRECT - Schema.Struct
+// ✅ CORRECT - Schema.Struct
 export const User = Schema.Struct({
-    id: UserId,
-    email: Schema.String,
-    name: Schema.String,
-    organizationId: OrganizationId,
-    role: Schema.Literal("admin", "member", "viewer"),
-    createdAt: Schema.DateTimeUtc,
-    updatedAt: Schema.DateTimeUtc,
-})
-export type User = Schema.Schema.Type<typeof User>
+  id: UserId,
+  email: Schema.String,
+  name: Schema.String,
+  organizationId: OrganizationId,
+  role: Schema.Literal("admin", "member", "viewer"),
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type User = Schema.Schema.Type<typeof User>;
 
 // Can derive encoded type for database/API
-export type UserEncoded = Schema.Schema.Encoded<typeof User>
+export type UserEncoded = Schema.Schema.Encoded<typeof User>;
 ```
 
 ### Input Types for Mutations
 
 ```typescript
 export const CreateUserInput = Schema.Struct({
-    email: Schema.String.pipe(
-        Schema.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/),
-        Schema.annotations({ description: "Valid email address" }),
-    ),
-    name: Schema.String.pipe(
-        Schema.minLength(1),
-        Schema.maxLength(100),
-    ),
-    organizationId: OrganizationId,
-    role: Schema.optionalWith(
-        Schema.Literal("admin", "member", "viewer"),
-        { default: () => "member" as const }
-    ),
-})
-export type CreateUserInput = Schema.Schema.Type<typeof CreateUserInput>
+  email: Schema.String.pipe(
+    Schema.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/),
+    Schema.annotations({ description: "Valid email address" }),
+  ),
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(100)),
+  organizationId: OrganizationId,
+  role: Schema.optionalWith(Schema.Literal("admin", "member", "viewer"), {
+    default: () => "member" as const,
+  }),
+});
+export type CreateUserInput = Schema.Schema.Type<typeof CreateUserInput>;
 
 export const UpdateUserInput = Schema.Struct({
-    name: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
-    role: Schema.optional(Schema.Literal("admin", "member", "viewer")),
-})
-export type UpdateUserInput = Schema.Schema.Type<typeof UpdateUserInput>
+  name: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
+  role: Schema.optional(Schema.Literal("admin", "member", "viewer")),
+});
+export type UpdateUserInput = Schema.Schema.Type<typeof UpdateUserInput>;
 ```
 
 ## Schema.transform and transformOrFail
@@ -111,61 +123,54 @@ export type UpdateUserInput = Schema.Schema.Type<typeof UpdateUserInput>
 ```typescript
 // Transform string to Date
 export const DateFromString = Schema.transform(
-    Schema.String,
-    Schema.DateTimeUtc,
-    {
-        decode: (s) => new Date(s),
-        encode: (d) => d.toISOString(),
-    }
-)
+  Schema.String,
+  Schema.DateTimeUtc,
+  {
+    decode: (s) => new Date(s),
+    encode: (d) => d.toISOString(),
+  },
+);
 
 // Transform with validation (can fail)
 export const PositiveNumber = Schema.transformOrFail(
-    Schema.Number,
-    Schema.Number.pipe(Schema.brand("PositiveNumber")),
-    {
-        decode: (n, _, ast) =>
-            n > 0
-                ? ParseResult.succeed(n as Schema.Schema.Type<typeof PositiveNumber>)
-                : ParseResult.fail(new ParseResult.Type(ast, n, "Must be positive")),
-        encode: ParseResult.succeed,
-    }
-)
+  Schema.Number,
+  Schema.Number.pipe(Schema.brand("PositiveNumber")),
+  {
+    decode: (n, _, ast) =>
+      n > 0
+        ? ParseResult.succeed(n as Schema.Schema.Type<typeof PositiveNumber>)
+        : ParseResult.fail(new ParseResult.Type(ast, n, "Must be positive")),
+    encode: ParseResult.succeed,
+  },
+);
 ```
 
 ### Common Transforms
 
 ```typescript
-// JSON string to object
-export const JsonFromString = <A, I>(schema: Schema.Schema<A, I>) =>
-    Schema.transform(
-        Schema.String,
-        schema,
-        {
-            decode: (s) => JSON.parse(s),
-            encode: (a) => JSON.stringify(a),
-        }
-    )
-
 // Comma-separated string to array
 export const CommaSeparatedList = Schema.transform(
-    Schema.String,
-    Schema.Array(Schema.String),
-    {
-        decode: (s) => s.split(",").map((x) => x.trim()).filter(Boolean),
-        encode: (arr) => arr.join(","),
-    }
-)
+  Schema.String,
+  Schema.Array(Schema.String),
+  {
+    decode: (s) =>
+      s
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean),
+    encode: (arr) => arr.join(","),
+  },
+);
 
 // Cents to dollars
 export const DollarsFromCents = Schema.transform(
-    Schema.Number.pipe(Schema.int()),
-    Schema.Number,
-    {
-        decode: (cents) => cents / 100,
-        encode: (dollars) => Math.round(dollars * 100),
-    }
-)
+  Schema.Number.pipe(Schema.int()),
+  Schema.Number,
+  {
+    decode: (cents) => cents / 100,
+    encode: (dollars) => Math.round(dollars * 100),
+  },
+);
 ```
 
 ## Schema.Class for Entities with Methods
@@ -174,37 +179,37 @@ Use `Schema.Class` when entities need methods:
 
 ```typescript
 export class User extends Schema.Class<User>("User")({
-    id: UserId,
-    email: Schema.String,
-    name: Schema.String,
-    role: Schema.Literal("admin", "member", "viewer"),
-    createdAt: Schema.DateTimeUtc,
+  id: UserId,
+  email: Schema.String,
+  name: Schema.String,
+  role: Schema.Literal("admin", "member", "viewer"),
+  createdAt: Schema.DateTimeUtc,
 }) {
-    get isAdmin(): boolean {
-        return this.role === "admin"
-    }
+  get isAdmin(): boolean {
+    return this.role === "admin";
+  }
 
-    get displayName(): string {
-        return this.name || this.email.split("@")[0]
-    }
+  get displayName(): string {
+    return this.name || this.email.split("@")[0];
+  }
 
-    canAccessResource(resource: Resource): boolean {
-        if (this.isAdmin) return true
-        return resource.ownerId === this.id
-    }
+  canAccessResource(resource: Resource): boolean {
+    if (this.isAdmin) return true;
+    return resource.ownerId === this.id;
+  }
 }
 
 // Usage
 const user = new User({
-    id: UserId.make(crypto.randomUUID()),
-    email: "alice@example.com",
-    name: "Alice",
-    role: "member",
-    createdAt: new Date(),
-})
+  id: UserId.make(crypto.randomUUID()),
+  email: "alice@example.com",
+  name: "Alice",
+  role: "member",
+  createdAt: new Date(),
+});
 
-console.log(user.displayName) // "Alice"
-console.log(user.isAdmin) // false
+console.log(user.displayName); // "Alice"
+console.log(user.isAdmin); // false
 ```
 
 ## Schema.annotations
@@ -213,30 +218,32 @@ Add annotations for documentation and validation messages:
 
 ```typescript
 export const CreateOrderInput = Schema.Struct({
-    productId: ProductId.pipe(
-        Schema.annotations({ description: "The product to order" }),
-    ),
-    quantity: Schema.Number.pipe(
-        Schema.int(),
-        Schema.positive(),
-        Schema.annotations({
-            description: "Number of items to order",
-            examples: [1, 5, 10],
-        }),
-    ),
-    shippingAddress: Schema.Struct({
-        line1: Schema.String.pipe(Schema.annotations({ description: "Street address" })),
-        line2: Schema.optional(Schema.String),
-        city: Schema.String,
-        state: Schema.String.pipe(Schema.length(2)),
-        zip: Schema.String.pipe(Schema.pattern(/^\d{5}(-\d{4})?$/)),
-    }).pipe(Schema.annotations({ description: "Shipping destination" })),
-}).pipe(
+  productId: ProductId.pipe(
+    Schema.annotations({ description: "The product to order" }),
+  ),
+  quantity: Schema.Number.pipe(
+    Schema.int(),
+    Schema.positive(),
     Schema.annotations({
-        title: "Create Order Input",
-        description: "Input for creating a new order",
+      description: "Number of items to order",
+      examples: [1, 5, 10],
     }),
-)
+  ),
+  shippingAddress: Schema.Struct({
+    line1: Schema.String.pipe(
+      Schema.annotations({ description: "Street address" }),
+    ),
+    line2: Schema.optional(Schema.String),
+    city: Schema.String,
+    state: Schema.String.pipe(Schema.length(2)),
+    zip: Schema.String.pipe(Schema.pattern(/^\d{5}(-\d{4})?$/)),
+  }).pipe(Schema.annotations({ description: "Shipping destination" })),
+}).pipe(
+  Schema.annotations({
+    title: "Create Order Input",
+    description: "Input for creating a new order",
+  }),
+);
 ```
 
 ## Optional Fields
@@ -245,18 +252,18 @@ Use `Schema.optional` and `Schema.optionalWith`:
 
 ```typescript
 export const UserPreferences = Schema.Struct({
-    // Optional, undefined if not provided
-    theme: Schema.optional(Schema.Literal("light", "dark")),
+  // Optional, undefined if not provided
+  theme: Schema.optional(Schema.Literal("light", "dark")),
 
-    // Optional with default value
-    language: Schema.optionalWith(Schema.String, { default: () => "en" }),
+  // Optional with default value
+  language: Schema.optionalWith(Schema.String, { default: () => "en" }),
 
-    // Optional with null support (for database compatibility)
-    bio: Schema.NullOr(Schema.String),
+  // Optional with null support (for database compatibility)
+  bio: Schema.NullOr(Schema.String),
 
-    // Optional but must be present if set (no undefined)
-    timezone: Schema.optional(Schema.String, { exact: true }),
-})
+  // Optional but must be present if set (no undefined)
+  timezone: Schema.optional(Schema.String, { exact: true }),
+});
 ```
 
 ## Union Types and Discriminated Unions
@@ -264,90 +271,123 @@ export const UserPreferences = Schema.Struct({
 ```typescript
 // Simple union
 export const PaymentMethod = Schema.Union(
-    Schema.Literal("card"),
-    Schema.Literal("bank_transfer"),
-    Schema.Literal("crypto"),
-)
+  Schema.Literal("card"),
+  Schema.Literal("bank_transfer"),
+  Schema.Literal("crypto"),
+);
 
 // Discriminated union (tagged)
 export const PaymentDetails = Schema.Union(
-    Schema.Struct({
-        _tag: Schema.Literal("Card"),
-        cardNumber: Schema.String,
-        expiry: Schema.String,
-        cvv: Schema.String,
-    }),
-    Schema.Struct({
-        _tag: Schema.Literal("BankTransfer"),
-        accountNumber: Schema.String,
-        routingNumber: Schema.String,
-    }),
-    Schema.Struct({
-        _tag: Schema.Literal("Crypto"),
-        walletAddress: Schema.String,
-        network: Schema.Literal("ethereum", "bitcoin", "solana"),
-    }),
-)
-export type PaymentDetails = Schema.Schema.Type<typeof PaymentDetails>
+  Schema.TaggedStruct("Card", {
+    cardNumber: Schema.String,
+    expiry: Schema.String,
+    cvv: Schema.String,
+  }),
+  Schema.TaggedStruct("BankTransfer", {
+    accountNumber: Schema.String,
+    routingNumber: Schema.String,
+  }),
+  Schema.TaggedStruct("Crypto", {
+    walletAddress: Schema.String,
+    network: Schema.Literal("ethereum", "bitcoin", "solana"),
+  }),
+);
+export type PaymentDetails = Schema.Schema.Type<typeof PaymentDetails>;
 
-// Usage with match
-const processPayment = (details: PaymentDetails) => {
-    switch (details._tag) {
-        case "Card":
-            return processCard(details.cardNumber, details.expiry, details.cvv)
-        case "BankTransfer":
-            return processBankTransfer(details.accountNumber, details.routingNumber)
-        case "Crypto":
-            return processCrypto(details.walletAddress, details.network)
-    }
-}
+// Usage with Match.valueTags
+const processPayment = (details: PaymentDetails) =>
+  Match.valueTags(details, {
+    Card: ({ cardNumber, expiry, cvv }) => processCard(cardNumber, expiry, cvv),
+    BankTransfer: ({ accountNumber, routingNumber }) => processBankTransfer(accountNumber, routingNumber),
+    Crypto: ({ walletAddress, network }) => processCrypto(walletAddress, network),
+  });
 ```
 
 ## Enums and Literals
 
 ```typescript
 // Use Literal for small, fixed sets
-export const UserRole = Schema.Literal("admin", "member", "viewer")
-export type UserRole = Schema.Schema.Type<typeof UserRole>
+export const UserRole = Schema.Literal("admin", "member", "viewer");
+export type UserRole = Schema.Schema.Type<typeof UserRole>;
 
 // Use Enums for larger sets or when you need runtime values
 export const OrderStatus = Schema.Enums({
-    Pending: "pending",
-    Processing: "processing",
-    Shipped: "shipped",
-    Delivered: "delivered",
-    Cancelled: "cancelled",
-} as const)
-export type OrderStatus = Schema.Schema.Type<typeof OrderStatus>
+  Pending: "pending",
+  Processing: "processing",
+  Shipped: "shipped",
+  Delivered: "delivered",
+  Cancelled: "cancelled",
+} as const);
+export type OrderStatus = Schema.Schema.Type<typeof OrderStatus>;
 ```
 
 ## Recursive Schemas
 
 ```typescript
 interface Category {
-    id: string
-    name: string
-    children: readonly Category[]
+  id: string;
+  name: string;
+  children: readonly Category[];
 }
 
 export const Category: Schema.Schema<Category> = Schema.Struct({
-    id: Schema.String,
-    name: Schema.String,
-    children: Schema.Array(Schema.suspend(() => Category)),
-})
+  id: Schema.String,
+  name: Schema.String,
+  children: Schema.Array(Schema.suspend(() => Category)),
+});
 ```
 
 ## Decoding and Encoding
 
 ```typescript
 // Decode (parse) - use in services
-const parseUser = Schema.decodeUnknown(User)
-const result = yield* parseUser(rawData) // Effect<User, ParseError>
+const parseUser = Schema.decodeUnknown(User);
+const result = yield * parseUser(rawData); // Effect<User, ParseError>
 
 // Decode sync - only in controlled contexts
-const user = Schema.decodeUnknownSync(User)(rawData)
+const user = Schema.decodeUnknownSync(User)(rawData);
 
 // Encode - for serialization
-const encodeUser = Schema.encode(User)
-const encoded = yield* encodeUser(user) // Effect<UserEncoded, ParseError>
+const encodeUser = Schema.encode(User);
+const encoded = yield * encodeUser(user); // Effect<UserEncoded, ParseError>
+```
+
+## JSON Encoding & Decoding
+
+Use `Schema.parseJson` to parse JSON strings and validate them with your schema in one step. This combines `JSON.parse` + `Schema.decodeUnknown` for decoding, and `JSON.stringify` + `Schema.encode` for encoding:
+
+```ts
+import { Effect, Schema } from "effect";
+
+const Row = Schema.Literal("A", "B", "C", "D", "E", "F", "G", "H");
+const Column = Schema.Literal("1", "2", "3", "4", "5", "6", "7", "8");
+
+class Position extends Schema.Class<Position>("Position")({
+  row: Row,
+  column: Column,
+}) {}
+
+class Move extends Schema.Class<Move>("Move")({
+  from: Position,
+  to: Position,
+}) {}
+
+// parseJson combines JSON.parse + schema decoding
+// MoveFromJson is a schema that takes a JSON string and returns a Move
+const MoveFromJson = Schema.parseJson(Move);
+
+const program = Effect.gen(function* () {
+  // Parse and validate JSON string in one step
+  // Use MoveFromJson (not Move) to decode from JSON string
+  const jsonString =
+    '{"from":{"row":"A","column":"1"},"to":{"row":"B","column":"2"}}';
+  const move = yield* Schema.decodeUnknown(MoveFromJson)(jsonString);
+
+  yield* Effect.log("Decoded move", move);
+
+  // Encode to JSON string in one step (typed as string)
+  // Use MoveFromJson (not Move) to encode to JSON string
+  const json = yield* Schema.encode(MoveFromJson)(move);
+  return json;
+});
 ```

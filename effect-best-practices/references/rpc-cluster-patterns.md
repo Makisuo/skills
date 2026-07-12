@@ -1,5 +1,16 @@
 # RPC & Cluster Patterns
 
+## Table of Contents
+
+- [RpcGroup for API Organization](#rpcgroup-for-api-organization)
+- [Error Unions in RPC](#error-unions-in-rpc)
+- [RPC Middleware for Authentication](#rpc-middleware-for-authentication)
+- [Workflow Definition](#workflow-definition)
+- [Activity Patterns](#activity-patterns)
+- [ClusterCron for Scheduled Jobs](#clustercron-for-scheduled-jobs)
+- [Triggering Workflows](#triggering-workflows)
+- [Workflow HTTP API](#workflow-http-api)
+
 ## RpcGroup for API Organization
 
 **Use `RpcGroup.make`** to organize related RPC endpoints:
@@ -126,15 +137,12 @@ export const AuthMiddlewareLive = Layer.effect(
                     const token = request.headers.get("authorization")?.replace("Bearer ", "")
 
                     if (!token) {
-                        return yield* Effect.fail(new UnauthorizedError({ message: "Missing token" }))
+                        return yield* new UnauthorizedError({ message: "Missing token" })
                     }
 
                     const user = yield* authService.validateToken(token).pipe(
-                        Effect.catchTag("TokenExpiredError", () =>
-                            Effect.fail(new UnauthorizedError({ message: "Token expired" }))
-                        ),
-                        Effect.catchTag("TokenInvalidError", () =>
-                            Effect.fail(new UnauthorizedError({ message: "Invalid token" }))
+                        Effect.catchTag("TokenExpiredError", "TokenInvalidError", () =>
+                            new UnauthorizedError({ message: "Invalid or expired token" })
                         ),
                     )
 
@@ -251,7 +259,7 @@ export const OrderFulfillmentWorkflowLayer = OrderFulfillmentWorkflow.toLayer(
 **Always include `success` and `error` schemas** in Activity.make:
 
 ```typescript
-// CORRECT - schemas specified
+// ✅ CORRECT - schemas specified
 yield* Activity.make({
     name: "SendEmail",
     success: EmailSentResult,
@@ -298,7 +306,7 @@ yield* Activity.make({
     execute: Effect.gen(function* () {
         const response = yield* fetch(url)
         if (!response.ok) {
-            return yield* Effect.fail(ExternalApiError.fromResponse(response))
+            return yield* ExternalApiError.fromResponse(response)
         }
         return yield* response.json()
     }),
@@ -409,7 +417,7 @@ const executeWorkflowHandler = Effect.gen(function* () {
 
     const workflow = client.workflows[name]
     if (!workflow) {
-        return yield* Effect.fail(new WorkflowNotFoundError({ name }))
+        return yield* new WorkflowNotFoundError({ name })
     }
 
     const result = yield* workflow.execute(payload)
