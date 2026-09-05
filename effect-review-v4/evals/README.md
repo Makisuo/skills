@@ -1,6 +1,12 @@
 # Review evaluations
 
 [evals.json](evals.json) defines three review prompts and expected outcomes.
+These are maintenance evaluations, not part of an ordinary code review. Run an
+agent-based comparison only when requested, using the total delegation budget
+in [SKILL.md](../SKILL.md). Instruction-only edits need metadata/link/consistency
+checks, not automatic old-versus-new runs. Runtime/API changes need the affected
+executable examples first.
+
 `setup.mjs` creates isolated git fixture repositories, using Effect resolved
 from the supplied project. It does not mutate that project or install packages.
 Keep generated fixtures, snapshots, and review outputs outside every installed
@@ -14,12 +20,23 @@ node <skill>/evals/setup.mjs --project <repo> --output <new-fixtures-directory>
 Compare a saved old skill with the candidate on identical fixture contents.
 Each evaluator reads only its assigned skill, prompt, and fixture, plus installed
 dependency source when needed; do not provide the answer key or prior audit.
-Prefer a fresh reviewer for each case and configuration. If the host limits agent
-threads, use one independent reviewer per configuration across cases, keep the
-configurations isolated, and record the carryover limitation. For a small
-controlled comparison, require reviewers in both configurations to work without
-delegation; this does not measure whole-repository orchestration speed. Fixtures
-must not be edited by reviewers.
+For an explicitly requested old-versus-new agent comparison, use at most two
+reviewer agents total: one per configuration, reused across its cases. Count
+agents already used for the task; do not open a fresh budget for evaluation or
+grading. Reviewers cannot delegate. The coordinator grades locally. Keep the
+configurations isolated and record within-configuration carryover rather than
+spawning a fresh agent per case. A larger benchmark needs an explicit higher
+agent budget from the user; do not propose it routinely. Fixtures must not be
+edited by reviewers.
+
+The prompts deliberately omit instructions forbidding subagents so they can
+check the skill's default behavior. Inspect execution traces as well as reports:
+an ordinary branch review or whole-repository audit must use zero subagents.
+Any evaluator-host prohibition on delegation must be disclosed as a confound;
+it cannot prove the skill itself caused zero delegation. A separate requested
+parallel-review check must enforce the lifetime total of two, no recursion, no
+extra verification team, and compact assignments/results. Do not claim a token
+reduction from agent counts alone.
 
 Save each report under `iteration-N/eval-<id>-<name>/<configuration>/outputs/`,
 along with available timing and trace evidence. Never invent token counts or

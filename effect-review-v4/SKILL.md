@@ -7,9 +7,10 @@ description: >-
   requests such as "effect v4 review", "review my Effect 4 changes", "check
   Effect patterns", or "audit the Effect codebase" when the project uses v4.
   Supports files, working changes, PR/branch diffs, and repository audits.
+  Reviews with one agent by default; delegation has an explicit total limit.
   Verify APIs against the installed version. For Effect v3 use effect-review.
 metadata:
-  version: "4.0.0"
+  version: "4.0.1"
   examples-verified-with: "effect and @effect/vitest 4.0.0-rc.111"
 ---
 
@@ -23,6 +24,9 @@ code quality.
 Use this skill read-only unless the user also requests fixes. When asked to
 review or improve this skill itself, inspect its instructions and examples;
 do not launch a product-code audit.
+
+Default to **one reviewer: the current agent, with zero subagents**, including
+whole-repository audits. Follow the delegation and context limits in section 3.
 
 ## 1. Establish scope and ground truth
 
@@ -84,18 +88,44 @@ performance, and affected callers before recommending it. Short combinator
 chains, local variables, exhaustive switches, and native boundary adapters can
 be the clearest correct implementation.
 
-## 3. Execute within available capabilities
+## 3. Review with one agent by default
 
-Review locally for a focused change. For a large scope, optional subagents may
-review independent, coherent subsystems, subject to host delegation rules and
-available concurrency. Do not multiply every shard by every concern. Keep
-cross-file integration and final verification with the coordinator.
+**Delegation budget: zero by default; at most two subagents in total when the
+user explicitly requests parallel or independent agent review.** Repository
+size, file count, available slots, or a request for a thorough audit do not
+authorize delegation. Do not ask to add agents routinely; continue locally.
+An explicitly requested higher count can override this limit, subject to host
+rules. A smaller user/host limit always applies.
 
-Give each delegated reviewer the same scope, resolved versions/patches,
-applicable conventions, relevant references, and finding format. Allow callers
-outside assigned files to be read as evidence. Do not assume a particular tool
-name, model, workflow engine, or unlimited slots. Without delegation, perform
-the same passes sequentially and state any incomplete coverage.
+- The cap is for the entire review, not concurrent agents or each wave. Count
+  every distinct delegated reviewer, including reused agents. Never reset the
+  budget for another concern, phase, retry, or verification pass.
+- No recursive delegation. Every delegated reviewer must work alone. Do not
+  create one agent per file, concern, finding, or shard-and-concern pair.
+- Delegate only bounded, independent work that avoids duplicating the main
+  review. Assign distinct subsystems, or a specific unresolved claim when an
+  independent check was requested. Keep integration and final verification
+  with the main reviewer; no automatic second team of verifiers.
+- Send a compact task with assigned paths, resolved versions/patches, applicable
+  conventions, relevant reference paths, and the expected result. Avoid copying
+  the full conversation, entire skill/reference set, diffs, or repository into
+  each prompt. Select isolated/no-history context when supported: a short prompt
+  alone does not prevent the host from inheriting the full conversation.
+  Reviewers may read callers outside their assignment as evidence.
+- Ask for confirmed findings, necessary evidence, and material coverage gaps,
+  normally within 600 words per delegated report. Use file references for long
+  reproductions; do not repeat source dumps or narrate every inspected file.
+- When the budget is used up or a reviewer fails, finish the remaining work
+  locally. Reuse an existing reviewer only for a specific missing check; do not
+  restart completed reviews or add replacement agents to bypass the cap.
+
+Review connected paths once and apply relevant concerns together. Cache the
+resolved version/policy evidence in a short note; load only relevant reference
+sections. Keep a compact coverage ledger for large audits and continue
+sequentially without re-reading completed areas unless new evidence requires it.
+Preserve requested coverage and consequential verification; report any actual
+omissions. Do not assume particular tools, models, or token-meter availability,
+and do not claim measured token savings without measurements.
 
 ## 4. Verify and report
 
@@ -129,8 +159,12 @@ They include negative-control tests proving why unsafe patterns fail. Run
 `scripts/check-examples.mjs --project <repo>` with Node and the project's
 installed dependencies; it does not install or upgrade packages.
 
-When changing guidance or dependencies, verify affected source and patches,
-run the examples, and compare review outputs on [evals/evals.json](evals/evals.json).
+When API/runtime guidance or dependencies change, verify affected source and
+patches and run affected examples. For instruction-only changes, check metadata,
+links, and consistency; do not automatically launch agents or a full benchmark.
+Use [evals/evals.json](evals/evals.json) for a requested review-behavior comparison,
+under the same total delegation budget. Ordinary code reviews do not run this
+skill's maintenance evaluations.
 See [evals/README.md](evals/README.md). Keep snapshots/results outside every
 skill-discovery root, for example `~/.agents/skill-workspaces/effect-review-v4`.
 A backup containing `SKILL.md` under `~/.agents/skills` can be discovered as

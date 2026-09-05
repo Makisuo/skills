@@ -34,6 +34,10 @@ Optional suggestions do not acquire severity from a preference.
 
 ## REVIEW-3 — Confirm and challenge
 
+Perform verification locally by default. This is a reasoning pass, not a
+requirement to spawn a verifier. Any explicitly requested independent reviewer
+counts toward the total delegation budget in [SKILL.md](../SKILL.md).
+
 Before reporting a consequential finding:
 
 1. Verify API existence, signature, and semantics at the resolved version.

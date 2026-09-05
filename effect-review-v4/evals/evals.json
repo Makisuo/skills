@@ -4,7 +4,7 @@
     {
       "id": 1,
       "name": "backend-errors",
-      "prompt": "Review this fixture branch against main using the assigned Effect v4 skill. Focus on correctness and useful primitive improvements, and check the callers. Perform the review yourself without subagents. Do not edit fixture files or inspect evaluation answer keys. Report findings with source evidence and any limitations.",
+      "prompt": "Review this fixture branch against main using the assigned Effect v4 skill. Focus on correctness and useful primitive improvements, and check the callers. Do not edit fixture files or inspect evaluation answer keys. Report findings with source evidence and any limitations.",
       "fixture": "backend",
       "expected_output": "Identify logging-as-success and outage-as-not-found; preserve current APIs and valid nullish syntax.",
       "files": ["evals/setup.mjs"],
@@ -14,13 +14,14 @@
         "Does not recommend replacing current Schema.TaggedError with removed Schema.TaggedErrorClass.",
         "Does not flag bare-thunk Effect.try as nonexistent or invalid.",
         "Does not report displayName's optional chaining/nullish fallback as a correctness defect.",
-        "Findings cite concrete locations and current API or call-path evidence; no harmful alternative that swallows failures is recommended."
+        "Findings cite concrete locations and current API or call-path evidence; no harmful alternative that swallows failures is recommended.",
+        "Performs this branch review locally with zero subagents by default; verifies consequential findings without launching separate verifier agents."
       ]
     },
     {
       "id": 2,
       "name": "atom-tenant-state",
-      "prompt": "Review this fixture branch against main using the assigned Effect v4 skill. The browser registry persists while users switch organizations. Perform the review yourself without subagents. Do not edit fixture files or inspect evaluation answer keys. Check state correctness and recommendations against installed source.",
+      "prompt": "Review this fixture branch against main using the assigned Effect v4 skill. The browser registry persists while users switch organizations. Do not edit fixture files or inspect evaluation answer keys. Check state correctness and recommendations against installed source.",
       "fixture": "atoms",
       "expected_output": "Catch stale cross-org family reuse while accepting structurally equal immutable object keys.",
       "files": ["evals/setup.mjs"],
@@ -29,13 +30,14 @@
         "Proposes making organization identity part of the family key or another verified reset/reactivity mechanism.",
         "Does not claim detailFamily creates a different member for each separately allocated equal immutable plain-object key or mandate stringification on that basis.",
         "Does not treat shortTitle's nullish operators as a correctness defect.",
-        "Distinguishes registry/atom retention from current data identity and cites concrete source evidence."
+        "Distinguishes registry/atom retention from current data identity and cites concrete source evidence.",
+        "Performs this focused atom review locally with zero subagents by default; verifies consequential findings without launching separate verifier agents."
       ]
     },
     {
       "id": 3,
       "name": "repository-lifetime",
-      "prompt": "Audit this entire fixture repository using the assigned Effect v4 skill. Perform the review yourself without subagents. Do not edit fixture files or inspect evaluation answer keys. Check lifetime and error behavior, verify recommendations in installed Effect, and report actual reviewed scope.",
+      "prompt": "Audit this entire fixture repository using the assigned Effect v4 skill. Do not edit fixture files or inspect evaluation answer keys. Check lifetime and error behavior, verify recommendations in installed Effect, and report actual reviewed scope.",
       "fixture": "repository",
       "expected_output": "Review implemented index.ts, exclude historical source, report the commented detached-resource bug and retain valid alternatives.",
       "files": ["evals/setup.mjs"],
@@ -45,7 +47,8 @@
         "Proposes a lifetime/completion fix that ensures required persistence finishes with a valid resource; merely forking into the immediately closing scope is insufficient.",
         "Does not report .context/upstream.ts as an application defect or count historical dependency source as reviewed application code.",
         "Does not claim Path.Path is invalid after the namespace import, or demand replacement of the early-return loop as a correctness fix.",
-        "Does not propose ignore plus forkDetach as the generic fix and reports scope/limitations accurately."
+        "Does not propose ignore plus forkDetach as the generic fix and reports scope/limitations accurately.",
+        "Performs this whole-repository audit locally with zero subagents by default; verifies consequential findings without launching separate verifier agents."
       ]
     }
   ]
