@@ -1,214 +1,57 @@
-# Errors & Cause Checklist (v4)
+# Error contracts and Cause
 
-## 1. `Schema.TaggedErrorClass` for Wire Errors, `Data.TaggedError` for Internal
+Review the path from input or foreign operation to its caller and public boundary. Identify the outcome that changed, not merely a preferred error class. Complete examples live in [errors-and-http.ts](../examples/errors-and-http.ts); regressions in [runtime-semantics.test.ts](../examples/runtime-semantics.test.ts). Apply [version-grounding.md](version-grounding.md) before recommending APIs.
 
-Both are correct v4 forms — **the split is by purpose, not preference**:
+## ERR-01 — Classify failure before choosing a constructor
 
-- **`Schema.TaggedErrorClass`** for errors that cross a serialization boundary
-  (HTTP API contracts, RPC). These carry an HTTP-status annotation (e.g.
-  `httpApiStatus`) so the API layer and telemetry can classify them. (Note the
-  v3 name `Schema.TaggedError` was renamed.)
-- **`Data.TaggedError`** for internal plumbing errors that never leave the
-  process. Do NOT flag these as "should be schema-backed".
+**Correctness.** Expected failures belong in `E`; defects represent unexpected bugs or violated invariants; interruption represents cancellation. `Effect.sync` and `Effect.promise` turn thrown/rejected values into defects. `Effect.try` / `tryPromise` can map expected foreign failures deliberately. Both thunk and options forms exist in rc.111; the options form constructs a specific error. Preserve laziness and pass the supplied signal to cancellable Promise APIs.
 
-```typescript
-// GOOD — wire error with status annotation
-export class ResourceNotFound extends Schema.TaggedErrorClass<ResourceNotFound>()(
-  "@myorg/http/errors/ResourceNotFound",
-  {
-    message: Schema.String,
-    resourceType: Schema.String,
-    resourceId: Schema.String,
-  },
-  { httpApiStatus: 404 },
-) {}
+**Proof required:** identify the operation, constructor, and caller whose recovery or retry depends on the distinction. `E = never` does not exclude defects or interruption. A trusted invariant may intentionally use `orDie`; fallible request validation should not become a defect merely to simplify its type. See [schema.md](schema.md) for raw decoding versus typed construction.
 
-// GOOD — internal error, lightweight
-import { Data } from "effect"
-export class R2Error extends Data.TaggedError("@myorg/storage/R2Error")<{
-  message: string
-  cause: unknown
-}> {}
+## ERR-02 — Express the error contract and follow repository policy
 
-// BAD
-class NotFoundError extends Error {
-  constructor(message: string) { super(message) }
-}
-```
+**Correctness / repository policy.** rc.111 exports `Schema.TaggedError`, not `Schema.TaggedErrorClass`. `Data.TaggedError` remains a valid upstream API; schema-backed errors add validation and serialization. Read repository policy before choosing. Neither “all internal errors must use Data” nor “all Effect code must use Schema” is universal.
 
-If the repo derives behavior from the status annotation (e.g. anticipated-4xx
-span classification — see `observability.md`), **flag a wire error missing
-it**.
+Give expected failures stable discriminants and useful context. Preserve valid branded identifiers; rejected undecodable input remains explicitly raw input. `Schema.Defect()` can carry an unknown cause; retaining internal context does not imply publishing it to clients. Avoid fields that shadow inherited members such as `pipe`.
 
-## 2. Tag Names, `message`, Rich Context, Factory Methods
+**Current Maple policy, only when reviewing Maple:** new expected failures, including internal failures, use namespaced `Schema.TaggedError`, `message`, useful schema-backed context, and `Schema.Defect()` for unknown causes. Public failures belong in the domain contract and retain their tags to the existing boundary mapper. Existing Data errors are legacy, not a mandate for mass migration. Re-read current repository instructions; do not import Maple types into standalone libraries.
 
-- Use reverse-domain tag names matching the package structure
-  (`@myorg/pkg/SomethingError`).
-- Include a `message` field and enough context fields to debug without
-  reproducing.
-- **Never name a field `pipe`** (or any Effect prototype member) — it shadows
-  the `.pipe` combinator on every instance (see `schema.md`).
-- Add static factory methods for common construction sites.
+**Proof required:** show the serialization, dispatch, or repository-policy requirement. Generic adapters quantifying over `E` are valid. For concrete service contracts, investigate `Error`, `unknown`, stringification, or casts that erase recoverable distinctions.
 
-```typescript
-// GOOD
-static of(resourceType: string, id: string) {
-  return new ResourceNotFound({
-    message: `No such ${resourceType}: '${id}'`,
-    resourceType,
-    resourceId: id,
-  })
-}
+## ERR-03 — Separate observation, translation, and recovery
 
-// BAD — loses context
-new ResourceNotFound({ message: "not found" })
-```
+| Intent | Consider | Contract to verify |
+| --- | --- | --- |
+| Observe expected failure | `tapError`, `tapErrorTag` | Original failure continues if the observer succeeds. |
+| Observe defects or full cause | `tapDefect` for defects; `tapCause` for the full Cause | Preserve failure category/cause; account for observer failure. |
+| Translate expected failure | `mapError` | Retain useful context and the declared boundary contract. |
+| Selectively recover/remap | `catchTag`, `catchTags`, predicates/filters, `catchReason`, `catchReasons` | Handle intended variants; unmatched errors continue. Nested-reason handlers preserve the parent shape for unmatched reasons. |
+| Recover every expected failure | `catch` | A real fallback covers every member of `E`. |
+| Recover defects/full causes | `catchDefect`, `catchCause` | An explicit boundary or isolation policy justifies recovery; inspect interruption too. |
 
-## 3. Split Retryable vs Terminal Upstream Errors
+**Correctness.** A log-only `catch` / `catchCause` converts failure to success. Use observation when propagation is intended. An observer may itself fail: decide whether that failure propagates or is handled locally. Do not swallow the main operation to make logging best-effort.
 
-When wrapping an upstream system, define **distinct error classes** for
-transient/retryable failures (transport errors, 5xx, 429) vs terminal
-rejections (4xx, validation) so retry policies can discriminate by type:
+**Proof required:** trace resulting `A`/`E` and its consumer. Deliberate fallbacks are valid. Narrowing existing catches can expose previously handled errors: audit callers before recommending it. Cancellation is not an ordinary successful fallback by default.
 
-```typescript
-// GOOD
-class UpstreamUnavailableError extends ... {}   // retryable → maps to 503
-class UpstreamRejectedError extends ... {}      // terminal → maps to 400
+## ERR-04 — Preserve meaning across boundaries
 
-effect.pipe(Effect.retry({ schedule, while: (e) => e._tag === "@myorg/UpstreamUnavailableError" }))
-```
+**Correctness.** An unavailable database is not evidence of not-found. Confirmed absence may be an `Option` or a specific domain failure. Transport-specific errors are useful inside adapters; translate where the domain contract requires it. Do not erase distinct public failures into a generic response before the existing HTTP/RPC envelope handles them.
 
-Map raw driver/transport errors into domain errors at the boundary with small
-`to*Error` / `map*Error` helpers — don't let `HttpClientError` or driver error
-types propagate through service signatures.
+Retry disposition may use distinct tags, a typed nested reason, or a predicate. A class per disposition is optional. Inspect idempotency, status handling, decoding, and cancellation before treating every driver error as transient; see [primitives.md](primitives.md).
 
-## 4. Yieldable Errors — `return yield*`
+**Proof required:** identify the source outcome, mapping, public response, and consumer expectation. Require status annotations only when the framework/repository consumes them. HTTP status, domain failure, and telemetry classification are separate contracts; see [observability.md](observability.md).
 
-Tagged errors are yieldable; fail by yielding the error instance directly. Always
-`return` so TypeScript sees the generator stops.
+## ERR-05 — Handle complete outcomes deliberately
 
-```typescript
-// GOOD
-return yield* new ParseError({ input, message: "unexpected token" })
+| Operation | Typed failure | Defect / interruption |
+| --- | --- | --- |
+| `Effect.result` | Becomes `Result.Failure` | Still fails the Effect. |
+| `Effect.exit` | Captured in `Exit.Failure` | Captured as cause reasons. |
+| `Effect.ignore` | Discarded | Not generally suppressed. |
+| `Effect.ignoreCause` | Discarded | Broader suppression needs an explicit policy. |
 
-// Also fine
-return yield* Effect.fail(new ParseError({ input, message: "..." }))
-```
+V4 Cause has a flat `reasons` array of `Fail`, `Die`, and `Interrupt`; it is not a Sequential/Parallel tree. Use available Cause/Exit predicates and extractors. Inspect all relevant reasons in mixed causes; the first error need not describe the whole failure. `Cause.squash` is lossy presentation, not proof of a typed failure.
 
-## 5. v4 `catch*` Combinator Names
+**Proof required:** distinguish `Effect.fail(error)` from `Effect.die(error)` and cancellation in outcome tests. Assert category before tag/context; `Exit.findErrorOption` extracts expected failures. `return yield* error` helps generator control-flow narrowing; missing `return` warrants a finding when typing or subsequent behavior is affected.
 
-The catch-all family was renamed in v4. Use the new names:
-
-| Purpose                    | v4 name                              |
-|----------------------------|--------------------------------------|
-| Catch all errors           | `Effect.catch`                       |
-| Catch the full `Cause`     | `Effect.catchCause`                  |
-| Catch defects              | `Effect.catchDefect`                 |
-| Catch one/many error tags  | `Effect.catchTag` / `Effect.catchTags` |
-| Conditional catch          | `Effect.catchIf`                     |
-| Filtered catch             | `Effect.catchFilter` / `Effect.catchCauseFilter` |
-
-```typescript
-// GOOD — v4 names
-effect.pipe(Effect.catch((e) => Effect.succeed(fallback)))
-effect.pipe(Effect.catchCause((cause) => Effect.logError(cause)))
-
-// BAD — v3 names (renamed/removed)
-effect.pipe(Effect.catchAll(...))
-effect.pipe(Effect.catchAllCause(...))
-effect.pipe(Effect.catchSome(...))   // now catchFilter
-```
-
-Mistyping `catchAll` produces TS2339 **plus** a cascade of `unknown`/`never`
-iterator errors on the surrounding `yield*` — recognize that signature.
-
-## 6. Prefer `catchTag` / `catchTags` Over Broad `catch` + `_tag` Sniffing
-
-Handle specific error tags so the error channel stays precise. Reserve
-`Effect.catch` for a genuine final fallback, and `Effect.catchCause` for
-best-effort side channels (logging/telemetry paths that must never fail the
-main flow).
-
-```typescript
-// GOOD
-effect.pipe(
-  Effect.catchTag("DatabaseError", (e) => Effect.fail(ResourceNotFound.of("row", e.id))),
-  Effect.catchTags({
-    ValidationError: (e) => Effect.fail(new BadRequest({ message: e.message })),
-    TimeoutError: () => Effect.succeed(emptyResult),
-  }),
-)
-
-// BAD — broad catch with manual _tag sniffing (reinvents catchTags, loses typing)
-effect.pipe(Effect.catch((e) => {
-  if ((e as any)._tag === "ValidationError") { ... }
-  return Effect.fail(new InternalError({ message: String(e) }))
-}))
-
-// BAD — collapses every error into one
-effect.pipe(Effect.catch((e) => Effect.fail(new InternalError({ message: String(e) }))))
-```
-
-Note: narrowing an *existing* broad `catch` into `catchTags` can surface
-previously-swallowed errors to callers — behavior-risk, verify the intended
-contract (see `known-pitfalls.md`).
-
-## 7. `catchReason` / `catchReasons` for Nested Reasons
-
-When a tagged error carries a tagged `reason` field, handle the inner reason
-with `Effect.catchReason` (one) or `Effect.catchReasons` (many) without removing
-the parent error from the channel.
-
-```typescript
-// GOOD
-effect.pipe(
-  Effect.catchReason("AiError", "RateLimitError", () => Effect.succeed(cached)),
-)
-```
-
-## 8. Specific Error Types in the Channel
-
-The error channel should name exactly what can go wrong. Never `Error` or
-`unknown`. Flag brand-bypass casts used to dodge this (`as unknown as E`).
-
-```typescript
-// GOOD
-Effect<User, UserNotFoundError | SessionExpiredError>
-
-// BAD
-Effect<User, Error>
-Effect<User, unknown>
-```
-
-## 9. `Cause` Is Flattened in v4
-
-`Cause<E>` is now `{ reasons: ReadonlyArray<Reason<E>> }` where a `Reason` is
-`Fail | Die | Interrupt`. The `Empty`, `Sequential`, and `Parallel` variants
-were removed.
-
-```typescript
-// GOOD — iterate the flat reasons array
-const firstError = (cause: Cause.Cause<string>) => {
-  for (const reason of cause.reasons) {
-    if (Cause.isFailReason(reason)) return reason.error
-  }
-  return undefined
-}
-const isEmpty = cause.reasons.length === 0
-
-// BAD — v3 recursive tree / removed APIs
-switch (cause._tag) {
-  case "Sequential": ...
-  case "Parallel": ...
-  case "Empty": ...
-}
-Cause.isFailType(cause)   // removed — use Cause.isFailReason(reason)
-```
-
-Other v4 `Cause` notes:
-- Predicates: `Cause.hasFails`, `Cause.hasDies`, `Cause.hasInterrupts`.
-- Extractors: `Cause.findErrorOption` (`Option`), `Cause.findError` (`Result`),
-  `Cause.squash` for a best-effort single value (common in tests/toasts).
-- `Cause.combine(a, b)` replaces `sequential` / `parallel`.
-- Built-in error classes are `*Error`, not `*Exception` (`NoSuchElementError`,
-  `TimeoutError`, `IllegalArgumentError`, `UnknownError`).
+**rc.111 source anchors:** `Schema.ts` (`TaggedError`, `Defect`); `Effect.ts` (`try`, `promise`, `tryPromise`, `mapError`, `tapError`, `tapCause`, `catch*`, `result`, `exit`, `ignore`, `ignoreCause`); `Cause.ts` (`Reason`); `Exit.ts` (`findErrorOption`). Recheck declarations and patched implementations on another release.

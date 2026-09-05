@@ -1,242 +1,130 @@
-# Schema Checklist (v4)
+# Schemas, construction, and boundary contracts
 
-Schema was substantially reworked in v4. Many v3 APIs were renamed or
-restructured.
+Use [version grounding](version-grounding.md) before recommending an API. The
+complete examples in [schema-layer-atom.test.ts](../examples/schema-layer-atom.test.ts)
+exercise the rc.111 behavior described here. A schema change changes a contract;
+inspect its producers, consumers, and error mapper before proposing a fix.
 
-## 1. Object Shapes and Classes
+## SCH-01 — Choose the operation for the input representation
 
-Use `Schema.Struct` for object shapes and `Schema.Class` for schema-backed
-classes.
+**Correctness.** Separate three operations:
 
-```typescript
-// GOOD
-const User = Schema.Struct({
-  name: Schema.String,
-  age: Schema.Number,
-})
+| Input and purpose | Operation to consider | Failure behavior in rc.111 |
+| --- | --- | --- |
+| Unknown encoded input from HTTP, storage, or a driver | `Schema.decodeUnknownEffect(S)` | Typed `SchemaError`; may require decoding services |
+| Typed constructor input that can violate checks | `S.makeEffect(input)` | Typed `SchemaIssue.Issue`, not `SchemaError` |
+| Trusted typed construction | `new Class(input)` / `S.make(input)` | Validation throws on invalid input |
+| Value leaving an application boundary | An appropriate encode operation | Validate the type-side representation and apply encoding transformations |
 
-class ErrorIssue extends Schema.Class<ErrorIssue>("ErrorIssue")({
-  id: ErrorIssueId,
-  serviceName: Schema.String,
-  priority: Schema.Number,
-}) {}
-```
+Construction and decoding can have different defaults and transformations. Do not
+substitute one for the other because their successful values look alike. `new`
+inside `Effect.sync` or a generator can turn a validation failure into a defect;
+use fallible construction when rejection belongs in the expected error contract.
+Map schema failures through the existing boundary mapper, preserving useful
+issues and avoiding exposure of sensitive raw values. Synchronous decoding is
+reasonable in trusted fixtures/module initialization or at a deliberate throwing
+interop boundary; a conversion to an Effect decoder must audit callers.
 
-All runtime validation should use `Schema` — no Zod, no manual `typeof` /
-`instanceof` guards for parsing. Use `Schema.NullOr(S)` for response fields
-that are present-but-nullable (distinct from optional).
+**Proof:** Identify the input representation, a failing value, and the resulting
+error category. Validate constructor defaults, decode transforms, and the public
+error response separately. Do not report a throwing constructor without evidence
+that its input can fail and its boundary expects typed failure.
 
-## 2. `Schema.Class` Values Are Constructed with `new` — at the Top Level
+## SCH-02 — Class encoders require constructed class values
 
-Anywhere a value *typed as a `Schema.Class`* reaches an **encoder** — HTTP
-client mutation payloads, response encoding — the top-level value must be a
-real instance (`new ClassName({...})`). Class encoders check class identity,
-not just shape: a wholly-plain object fails with `Expected ClassName, got
-{...}`, and in HTTP clients that failure is typically converted to a **defect**
-(`Effect.die`), so the caller sees a generic error with **no network request
-made**.
+**Correctness.** In the checked release, a wholly plain value passed to a
+`Schema.Class` encoder fails the class identity check. Construct the top-level
+class via `new`, `.make`, `.makeEffect`, or decoding as appropriate. Check the
+actual endpoint schema: a Struct contract does not acquire a class requirement
+merely because a similar domain class exists.
 
-```typescript
-// GOOD
-mutate({ payload: new ErrorIssueTransitionRequest({ toState }) })
+Nested plain fields under a class constructor are not automatically a defect:
+construction recursively builds nested classes, including supported arrays and
+unions. Keep the existing nested-construction protection. Do not demand `new`
+at every level, or report identity based on TypeScript shape alone. Client
+wrappers may convert encode failures into defects before making a request;
+trace the actual wrapper before claiming that outcome.
 
-// BAD — dies client-side before any fetch
-mutate({ payload: { toState } })
-```
+**Proof:** Exercise the actual encoder with the top-level plain value and with
+the constructed value. Check nested constructors and whether any request occurs.
+The linked example covers these differences without a transport assumption.
 
-**Nested class fields are NOT a violation** (verified empirically on beta.93):
-the class constructor's `make` recursively **constructs** nested class values
-from plain literals — `new Response({ items: [{ name: "x" }] })` produces real
-`Item` instances and encodes fine. Only flag a **plain top-level object**
-handed to an encoder; do not flag plain literals for nested class fields under
-a `new` outer constructor. (A past review reported this as a Critical and was
-wrong.)
+## SCH-03 — Preserve absence, explicit undefined, and null separately
 
-## 3. Never Name a Field After an Effect Prototype Member (`pipe`)
+**Correctness.** `optionalKey(S)` admits an absent key, while a present value must
+match `S`; `optional(S)` also admits explicit `undefined`. `NullOr(S)` admits
+`null`; optionality alone does not. JSON cannot carry `undefined`, but JavaScript
+producers can create it before encoding. TypeScript's `exactOptionalPropertyTypes`
+affects static detection, not these runtime semantics.
 
-A schema field named `pipe` shadows the `.pipe` method on every instance of
-that class — `error.pipe(...)` silently becomes a property read. This was a
-real Critical that required renaming a field across ~90 sites. Use `pipeName`
-or similar.
+Choose the schema from the contract, not merely from whether JavaScript constructs
+it. For an exact optional field, fix forwarding sites to omit an undefined key
+when omission is intended. Do not automatically widen the contract to `optional`.
+Conversely, do not mechanically replace `optional` with `optionalKey`: callers
+may deliberately pass undefined. Follow applicable repository schema conventions.
 
-```typescript
-// BAD — instance.pipe is now a string, not the combinator
-class WarehouseQueryError extends Schema.TaggedErrorClass<...>()("...", {
-  pipe: Schema.String,
-}) {}
-```
+**Proof:** List relevant construction, decode, and encode sites. Check `{}`,
+`{ field: undefined }`, `{ field: null }`, a valid value, and an invalid value.
+Check spreading decoded instances versus explicitly forwarding possibly absent
+properties. Any optionality migration requires producer/consumer validation;
+a successful typecheck alone is insufficient.
 
-## 4. Branded Types via `Schema.brand`
+## SCH-04 — Decode brands at trust boundaries without fabricating valid IDs
 
-Brand all entity IDs so they are not interchangeable with plain strings.
-Validation is applied with `.check(...)`. Prefer shared brand *factory helpers*
-(one place defining the check + brand + annotation) over ad-hoc inline brands.
+**Correctness / repository policy.** Brands distinguish identifiers and other
+domain values where confusion has an observable consequence or policy requires
+them. Reuse the domain schema and its actual format; do not invent validators
+from examples. `as EntityId` cannot establish that untrusted input is valid.
+Keep rejected input unbranded in explicitly raw error context; valid identifiers
+can retain their brands. Do not require every local string to become a new brand.
 
-```typescript
-// GOOD
-const TraceId = Schema.String.check(Schema.isMinLength(1), Schema.isTrimmed()).pipe(
-  Schema.brand("@myorg/TraceId"),
-  Schema.annotate({ identifier: "@myorg/TraceId", title: "Trace ID" }),
-)
-type TraceId = Schema.Schema.Type<typeof TraceId>
+**Proof:** Trace the origin and existing validation. A boundary conversion should
+reject malformed inputs in the intended error channel; check the actual UUID
+version/variant, prefix, or other constraint rather than a hardcoded fixture rule.
 
-// BAD — plain string for an entity ID
-const traceId: string = row.trace_id
-```
+## SCH-05 — Validate external representations and numeric precision
 
-Never bypass a brand with a cast (`row.id as AlertRuleId`) — decode through the
-schema (`Schema.decodeUnknownSync(AlertRuleId)(row.id)`).
+**Correctness.** A driver can supply strings where the application expects numbers.
+Use the existing boundary codec and actual driver contract. Accepting both numeric
+representations does not make integers above the JavaScript safe range precise:
+identity-sized integers may need string or bigint representation end to end.
+Do not prescribe a global driver setting from this generic skill.
 
-## 5. Filters Are `is`-Prefixed and Applied with `.check`
+**Proof:** Inspect settings, selected representation, row codec, and consumers.
+Test representative wire values, rejected non-finite input, and precision-sensitive
+identities. For Maple, read its current warehouse instructions and shared codecs;
+the protocol setting and identity-column policy are owned by that repository.
 
-v4 renamed all filters with an `is` prefix; apply them via `.check(...)`.
+## SCH-06 — Keep schema APIs and transformations version-correct
 
-```typescript
-// GOOD
-Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))
-Schema.String.check(Schema.isMinLength(1), Schema.isPattern(/@/))
-Schema.String.check(Schema.isUUID())
+**Compatibility.** Verify public declarations and actual execution code. In the
+checked rc.111 release, examples use `Schema.TaggedError`, `.check(...)`,
+`is`-prefixed checks, array arguments to `Union`/`Tuple`/`Literals`, and
+`decodeTo`. Decoder/encoder names include their Effect/Result/Option/Sync form.
+Do not preserve obsolete beta names such as `TaggedErrorClass` by rote, or
+recommend a textual rename without checking its types and semantics.
 
-// BAD — v3 bare filters
-Schema.Number.pipe(Schema.greaterThanOrEqualTo(0))
-Schema.String.pipe(Schema.pattern(/@/))
-Schema.UUID
-```
+**Proof:** Typecheck complete recommended examples against the resolved release.
+Test round-trips only where both directions are part of the contract; intentional
+normalization need not reproduce the original encoded bytes.
 
-Common renames: `minLength` → `isMinLength`, `maxLength` → `isMaxLength`,
-`pattern` → `isPattern`, `greaterThan` → `isGreaterThan`, `int` → `isInt`,
-`length` → `isLengthBetween`. `UUID` → `String.check(isUUID())`, `ULID` →
-`String.check(isULID())`. Note: `positive` / `negative` / `nonNegative` were
-removed — use `isGreaterThan(0)` etc.
+## SCH-07 — Avoid collisions with required instance behavior
 
-## 6. Constructors Take Arrays, Not Variadic Arguments
+**Correctness.** Schema-backed error/class fields can shadow inherited members.
+Inspect members such as `pipe`, error fields, and serialization hooks against
+the actual base class. Do not generalize one collision to every plain Struct.
 
-`Union`, `Tuple`, `Literals`, and `TemplateLiteral` take a single array.
+**Proof:** Show the member used by a consumer becoming the wrong value or type.
+Renaming a public field requires auditing serialized contracts and callers.
 
-```typescript
-// GOOD
-Schema.Union([UserSchema, AdminSchema])
-Schema.Tuple([Schema.String, Schema.Number])
-Schema.Literals(["draft", "published", "archived"])
-Schema.Null                              // was Literal(null)
+## SCH-08 — Prefer existing schema contracts over parallel validation
 
-// BAD — v3 variadic form
-Schema.Union(UserSchema, AdminSchema)
-Schema.Literal("draft", "published")
-```
+**Optional simplification / repository policy.** When validation is duplicated
+across a real boundary, reuse a suitable schema to keep constraints and failures
+consistent. A narrowing predicate, exhaustive switch, or ordinary `typeof` guard
+inside already validated code is not inherently wrong. Do not force classes for
+plain records or add schemas to computations with no validation requirement.
 
-## 7. `optionalKey` vs `optional` — Direction Matters ⚠️
-
-The semantic difference:
-
-- `Schema.optionalKey(S)` — the key may be **absent**, but if present the value
-  must be a valid `S`. **It rejects an explicit `undefined`.**
-- `Schema.optional(S)` — the value may be `undefined`.
-
-**TypeScript does not catch the difference** (an optional property `k?: T`
-still admits `undefined` unless `exactOptionalPropertyTypes` is on), so a wrong
-choice fails **only at runtime**, at construction/encode time.
-
-Decision rule:
-
-- **Decode-only schemas** (JSON responses, DB rows, webhook payloads you never
-  construct in JS) → `optionalKey` is correct and precise.
-- **Schemas constructed or encoded from JS** (request payloads built in the
-  client, widget configs, documents rebuilt via `new Class({...})`) →
-  `optional`. JS code routinely passes `field: maybeUndefined`, and
-  `optionalKey` throws on it (`Expected string, got undefined`).
-
-**NEVER recommend a mass `optional → optionalKey` flip as a convention
-cleanup.** Past reviews of this skill did exactly that — twice — and both were
-reverted after breaking production at runtime (payload constructors threw on
-`undefined` fields the UI legitimately passes).
-
-What TO flag (the reverse direction):
-
-- An `optionalKey` field on a JS-constructed schema whose call sites can pass
-  `undefined` — that is a latent runtime crash.
-- A construction site forwarding a possibly-`undefined` value into an
-  `optionalKey` field. The safe form omits the key:
-
-```typescript
-// GOOD — omit the key when the value is undefined
-new Doc({ ...(tags !== undefined && { tags }) })
-
-// SAFE — spreading a *decoded* instance (absent optionalKey fields are
-// genuinely absent from the object)
-new Doc({ ...existing, name })
-
-// BAD — throws at runtime if existing.tags is undefined
-new Doc({ tags: existing.tags })
-```
-
-Any finding proposing an optionality change is **behavior-risk**: it must list
-the construction sites and survive verification (see
-`known-pitfalls.md` Part 2).
-
-## 8. Compose Schemas with `decodeTo`
-
-v3's `compose` is `decodeTo` in v4. Annotations use `Schema.annotate` (was
-`annotations`).
-
-```typescript
-// GOOD
-const Parsed = Schema.String.pipe(Schema.decodeTo(MySchema))
-const Named = MySchema.pipe(Schema.annotate({ title: "My Schema" }))
-
-// BAD — v3 names
-Schema.compose(StringSchema, MySchema)
-MySchema.pipe(Schema.annotations({ title: "My Schema" }))
-```
-
-## 9. Decoders
-
-v4 decoder names: `decodeUnknownSync` (throws), `decodeUnknownEffect`,
-`decodeUnknownExit`, `decodeUnknownOption`, `decodeUnknownResult` (and the
-`decode*` variants for already-typed input). The bare `decodeUnknown` /
-`decode` from v3 are now `decodeUnknownEffect` / `decodeEffect`. The
-`validate*` family was removed — use `decode*` plus `Schema.toType`.
-
-```typescript
-// GOOD — in Effect code, prefer the Effect variant (typed error channel)
-const userEff = yield* Schema.decodeUnknownEffect(User)(raw)
-
-// GOOD — decodeUnknownResult pairs with Array.filterMap (Result-returning callback)
-const valid = Array.filterMap(rows, (row) => Schema.decodeUnknownResult(Row)(row))
-
-// GOOD — sync is fine at module init / fixtures
-const id = Schema.decodeUnknownSync(AlertRuleId)("11111111-1111-4111-8111-111111111111")
-
-// BAD — removed
-Schema.validateSync(User)(raw)
-// BAD — Sync + Effect.try in Effect code when decodeUnknownEffect exists
-yield* Effect.try({ try: () => Schema.decodeUnknownSync(User)(raw), catch: ... })
-```
-
-Note: `Schema.Decoder` was removed in later betas — use `Schema.Codec<...>` for
-a concrete schema-valued field/bound, `Schema.ConstraintDecoder<T>` for
-decode-only generic bounds. Converting *existing* `decodeUnknownSync` call
-sites to `decodeUnknownEffect` is **behavior-risk** (moves failures from thrown
-defect to error channel) — fine for new code, audit callers for conversions.
-
-## 10. Numeric Codecs for External Systems
-
-Some backends serialize 64-bit integers as JSON **strings** (ClickHouse
-`FORMAT JSON` quotes `UInt64`/`Int64` — the results of `count()`, `sum()`,
-`uniq()` — while other paths return numbers). A bare `Schema.Number` on such a
-column parses in dev and throws a `ParseError` (surfacing as a bodyless 500) in
-the stringifying environment only.
-
-```typescript
-// GOOD — union codec accepts both encodings (maple: CH.CHNumber, attached via rowSchema)
-const CHNumber = Schema.Union([Schema.Finite, Schema.FiniteFromString])
-
-// BAD — breaks only against the backend that stringifies 64-bit ints
-count: Schema.Number
-```
-
-Flag `Schema.Number` on fields decoded from a warehouse/driver known to
-stringify 64-bit values; point at the repo's shared codec if one exists. Do not
-suggest flipping driver-global settings like
-`output_format_json_quote_64bit_integers: 0` — that corrupts genuinely large
-64-bit values (hash fingerprints > 2^53).
+**Proof:** Name the duplicate contract or lost validation detail the change removes.
+Follow repository choices about schema libraries without claiming they are a
+universal Effect runtime restriction.

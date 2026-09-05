@@ -1,152 +1,82 @@
-# Observability Checklist (v4)
+# Observability
 
-Effect has built-in structured logging, tracing, and metrics. v4 ships
-lightweight OTLP exporters under `effect/unstable/observability`.
+## OBS-1 — Trace meaningful operations in the executing runtime
 
-## 1. Trace Named Functions with `Effect.fn`
+**Correctness / repository policy / optional simplification.**
 
-Wrapping a function with `Effect.fn("Service.method")` automatically attaches a
-tracing span and improves stack traces. Use a descriptive `"Service.method"`
-name for service methods.
+Named Effect.fn and withSpan establish operation spans. Unnamed Effect.fn can
+retain a stack boundary without a span. Verify existing parents/wrappers before
+flagging an untraced service method. Avoid multiplying spans on per-row or hot
+helpers; a rename can break queries keyed by name.
 
-```typescript
-// GOOD
-const listIssues = Effect.fn("ErrorsService.listIssues")(function* (orgId) {
-  return yield* repo.query(orgId)
-})
-```
+Trace/log/metric layers must reach the runtime executing the work. Follow
+ManagedRuntime, atom runtime, host adapters, and child fibers across boundaries.
+A default runtime can drop a wrapper span while separately instrumented
+children export. Require evidence of the actual runtime graph, not merely the
+absence of a local provide.
 
-## 2. Add Spans with `Effect.withSpan` — Sparingly
+## OBS-2 — Preserve outcomes while observing them
 
-For a standalone `Effect.gen` block (not wrapped by `Effect.fn`), add a span
-with `Effect.withSpan`. Give every span a stable, greppable name. Prefer
-`annotateCurrentSpan` on the existing span over spinning a new `withSpan`
-unless it is a genuinely distinct sub-operation — extra nesting without new
-information is noise.
+**Correctness.**
 
-```typescript
-// GOOD
-Effect.gen(function* () {
-  return yield* doWork()
-}).pipe(Effect.withSpan("HttpErrors.listIssues"))
-```
+Use tapError/tapCause when failure must continue. A catch returning a logging
+effect recovers to success; spans and callers may then report success. Decide
+whether a failing observer may change the result and handle that deliberately.
+Preserve defects/interruption according to the owning boundary; do not suppress
+a mixed cause based on its first tag.
 
-## 3. Annotate Spans with `Effect.annotateCurrentSpan` — With DATA
+Use structured logs/annotations inside Effect to carry context. Console output
+at native bootstrap or diagnostics boundaries can be legitimate. Check
+multiple layers logging and rethrowing the same failure.
 
-Attach contextual attributes to the current span so traces are filterable.
-Use dotted, namespaced keys consistent with the repo's conventions (`query.*`,
-`db.*`, `cache.*`, a vendor namespace like `maple.*`), and annotate the tenant
-(orgId) on tenant-scoped service methods.
+## OBS-3 — Separate three status models
 
-```typescript
-// GOOD
-yield* Effect.annotateCurrentSpan({
-  orgId: tenant.orgId,
-  "query.context": "listIssues",
-  "query.limit": query.limit ?? 100,
-})
-yield* Effect.annotateCurrentSpan("issueCount", response.issues.length)
-```
+**Correctness / repository policy.**
 
-⚠️ Annotate **data values**, not objects/methods. A real bug: annotating
-`error.pipe` (the pipe *method*, because a schema field shadowed it) instead of
-the error's data — the span recorded a function. Check that every annotated
-value is a primitive or intentional serializable payload.
+1. Native Effect Tracer.SpanStatus tracks Started/Ended and an Exit.
+2. OTLP has a status representation produced by the exporter.
+3. Products such as Maple may persist title-cased strings and apply their own
+   anticipated-error policy. These are not interchangeable API types.
 
-## 4. Anticipated Errors Record `Ok` Spans, Not `Error` ⚠️
+For HTTP spans, standard server 4xx status is normally unset; client 4xx
+normally indicates Error. 5xx and transport failures generally indicate Error.
+Application context can refine classification. Intentional caller cancellation
+should not be classified as an HTTP error.
+[HTTP semantic conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status).
 
-Span status is a **semantic decision, not a mirror of the Effect exit**. If a
-tracer marks every failed exit as `Error`, every expected business rejection —
-404s, validation failures, auth denials, rate limits — floods error tracking
-(dashboards that materialize errors from `StatusCode='Error'`). This caused a
-real incident: expected 4xx outcomes surfaced as "Unknown Error" issues.
+Do not globally flag an exporter simply because it maps failed exits to errors:
+inspect span kind, operation, and repo policy. Maple's custom tracer maps
+configured anticipated failures to Ok without an exception event; a cause
+containing a defect must remain an error. Load current
+maple-telemetry-conventions and actual tracer/tests for Maple. Keep title case,
+identifiers, dual resource attributes, and loop prevention at that boundary.
 
-The correct pattern (mirrors the OTel HTTP semconv rule for SERVER spans: only
-5xx is `Error`, 4xx is `Ok`):
+## OBS-4 — Exporter ownership and shutdown
 
-- Expected/anticipated business failures (typically errors annotated with a
-  4xx status) → span status `Ok`, no `exception` event; the span still records
-  latency and the error tag.
-- Genuine failures (5xx-class, defects) → span status `Error`.
-- Ideally the anticipated set is **derived** from the error definitions (e.g.
-  every wire error annotated with a 4xx `httpApiStatus`) so it cannot drift.
+**Correctness.**
 
-Flag: a tracer/exporter layer that sets `Error` purely from the exit; a new
-4xx-class wire error missing the status annotation that would classify it.
+Follow telemetry layers through acquisition and finalization. Standard v4 OTLP
+modules live under effect/unstable/observability; a custom exporter or another
+SDK may be intentional. Otlp.layer requires HTTP and serialization dependencies;
+layerJson/layerProtobuf provide serialization but still need a client in the
+example baseline. Verify installed signatures.
 
-## 5. Structured Logging — Never `console.log`
+Long-running runtimes need disposal; short-lived hosts need a flush path that
+the host actually awaits or extends. Browser visibility/pagehide hooks alone
+do not guarantee asynchronous fetch completion. Inspect transport and lifecycle
+integration, not just hook existence. Detaching flush work does not keep an
+isolate alive. Metrics need a reader/exporter to leave a process, but may be
+consumed locally; report export gaps against an operational requirement.
 
-Use `Effect.log` / `Effect.logInfo` / `Effect.logWarning` / `Effect.logError`
-with structured data objects. Add log annotations with `Effect.annotateLogs`.
+## OBS-5 — Useful, bounded context
 
-```typescript
-// GOOD
-yield* Effect.logInfo("query completed", { rowCount, durationMs })
-yield* Effect.logError("export failed", { cause })
+**Correctness / repository policy.**
 
-// BAD
-console.log("query completed", rowCount)
-```
+Attribute/log values must be data, not accidentally selected methods such as
+error.pipe. Check standard/repo names, tenant identity, span kind, and outbound
+propagation. Avoid tokens, authorization headers, secrets, and arbitrary bodies.
+Check metric-label cardinality and large payload costs even if serializable.
 
-## 6. Exporter Wiring Is a Layer — And Repo-Specific
-
-Telemetry export is wired as a `Layer` composed once at the entrypoint, never
-constructed ad hoc inside request handlers. The v4 building blocks are the
-`Otlp` modules from `effect/unstable/observability`; but repos may legitimately
-run their own OTLP SDK (custom buffer/flush tracers) or `@effect/opentelemetry`
-— **check the repo's telemetry setup before prescribing either**.
-
-```typescript
-// GOOD — observability layer, composed once at the entrypoint
-import { Otlp } from "effect/unstable/observability"
-
-const ObservabilityLive = Otlp.layer({
-  baseUrl: otlpEndpoint,
-  resource: { serviceName: "my-service" },
-})
-```
-
-Two wiring rules that ARE universal:
-
-- **The tracer layer must be provided into the same runtime that runs the
-  traced code.** An effect executed on a different runtime (a default/global
-  runtime, a separate ManagedRuntime) does not see the tracer — its spans
-  silently vanish while child spans that re-provide the layer survive,
-  producing **rootless traces**. (Real prod bug via UI atoms — see
-  `effect-atom.md` §2.)
-- **Short-lived isolates and browsers need an explicit flush path.** A
-  timer-based batch exporter loses the tail: flush on `pagehide` /
-  `visibilitychange` in browsers, `ctx.waitUntil(flush())` in serverless
-  isolates. Flag an exporter with no flush hook in such environments.
-
-## 7. Metrics Need an Exporter — But Check Intent
-
-`Metric.*` instruments only leave the process if the telemetry setup includes a
-metrics reader/exporter. Defining metrics under a traces-only SDK is dead code
-— **but some repos do this deliberately** (span attributes carry the
-observability instead, with metric export planned later). Check the repo's SDK
-before flagging in either direction; at most Info when the setup is
-documented.
-
-## 8. Span Status Codes Are Title Case
-
-When setting span status explicitly, use title-cased values: `"Ok"`, `"Error"`,
-`"Unset"` — not uppercase.
-
-```typescript
-// GOOD
-status: "Error"
-
-// BAD
-status: "ERROR"
-```
-
-## 9. Don't Over-Instrument Hot Paths
-
-Avoid adding spans to very high-frequency internal paths (e.g. per-request auth
-token validation, per-row mappers). Each span has cost; instrument meaningful
-operations, not every helper. `Effect.fnUntraced` exists precisely for
-pure/hot-path helpers that should not emit a span. Conversely, a public service
-method wrapped in `fnUntraced` loses its trace — flag both directions. Span
-additions/removals on hot paths are behavior-risk (dashboards key on span
-names/volumes).
+Validate changed failure classification (including mixed causes), context
+propagation, flush/disposal, and hot-path sampling/volume. Generic setup
+preferences alone are optional suggestions.

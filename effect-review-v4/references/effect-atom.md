@@ -1,171 +1,129 @@
-# Effect Atom Checklist (v4)
+# Atom state, requests, and lifecycle
 
-In v4, the atom reactivity layer lives in core Effect at
-`effect/unstable/reactivity` — `Atom`, `AtomHttpApi`, `AtomRegistry`,
-`AsyncResult` — with React bindings via the atom hooks (`useAtom`,
-`useAtomValue`, `useAtomSet`, `useAtomRefresh`).
+Resolve the actual Effect reactivity and React binding versions. In rc.111 the
+core modules live under `effect/unstable/reactivity`; React hooks come from
+`@effect/atom-react`. Read local wrappers before recommending builder methods or
+runtime access. The [executable examples](../examples/schema-layer-atom.test.ts)
+cover structural keys and retained asynchronous states.
 
-**Before flagging Result-API usage, read the app's shim.** Apps typically
-re-export atoms through a local module (e.g. `lib/effect-atom.ts`) that adds
-their own `Result` helpers over `AsyncResult` — the available builder methods
-are whatever the shim defines (e.g. `onSuccess / onInitial / onError / orElse /
-render`), not a remembered upstream API. Do not flag "missing `onErrorTag`" or
-similar methods that don't exist in the shim.
+## ATOM-01 — Preserve identity for the intended state lifetime
 
-## 1. Create Atoms at Module Scope
+**Correctness.** Recreating an atom during every render can reset state and
+restart work. Module-level atoms and families are common solutions; a stable
+component-local atom created through a suitable initializer/memoization is also
+valid when its lifetime is deliberately local. Review key/dependency changes
+that intentionally reset identity. Do not move component-owned state globally
+merely to satisfy a module-scope rule.
 
-`Atom.make`, `Atom.fn`, and `Atom.family` must be called **outside** React
-render. Creating an atom inside a component makes a new atom every render and
-loses its state.
+**Proof:** Render repeatedly, update relevant props, and remount as needed. Show
+which state or request survives or resets and why that matches the contract.
 
-```typescript
-// GOOD — module scope
-const countAtom = Atom.make(0)
+## ATOM-02 — Use complete immutable family keys
 
-// BAD — recreated every render
-function Counter() {
-  const countAtom = Atom.make(0)
-  ...
-}
-```
+**Correctness.** rc.111 `Atom.family` uses structural hashing/equality, so newly
+allocated equal plain-object keys can share one atom. Canonical strings remain
+an option, not a requirement. Check the installed equality implementation:
+function identity and custom equality can matter; hashing/comparison caches make
+mutating a key unsafe. Avoid serializing away meaningful distinctions.
 
-## 2. Effect-Backed Atoms Run on the Shared AtomRuntime ⚠️
+Keys or registry/runtime boundaries must distinguish all inputs that affect the
+result, including tenant, user, permissions, time bounds, and filters where
+applicable. Auth held elsewhere does not automatically invalidate an old cache.
 
-An Effect-backed atom that uses the app's API client — or whose spans should
-reach the app's tracer — must be built from the shared runtime
-(`AppApiClient.runtime.atom(...)`), **not** bare `Atom.make(effect)`.
+**Proof:** Compare equal inputs, changed inputs, and different security contexts.
+Verify equal object keys share under the installed release. Trace key mutation
+and omitted inputs to stale or incorrectly shared data before reporting a bug.
 
-Why (real production bug): bare `Atom.make(effect)` runs on the *default* atom
-runtime, which lacks the app's telemetry layer. Child spans that internally
-re-provide the client layer still export, but the atom's own wrapper span never
-flushes — producing **rootless traces** where children point at a parent that
-was never exported. Composite atoms wrapping several queries in `Effect.all`
-are the classic victim.
+## ATOM-03 — Supply the runtime required by the entire computation
 
-```typescript
-// GOOD — composite atom on the shared runtime
-const family = Atom.family((key: string) =>
-  AppApiClient.runtime.atom(runComposite(key)))
+**Correctness.** An effect-backed atom must run with the services and telemetry
+its full computation requires. Use the application's runtime factory when it
+owns those layers. A nested client that provides its own transport does not prove
+the outer atom's span or dependencies are correctly supplied. Bare `Atom.make`
+is valid for values, derived state, and effects whose runtime is appropriate.
 
-// BAD — wrapper span silently dropped
-const family = Atom.family((key: string) => Atom.make(runComposite(key)))
-```
+Inspect global-layer composition and acquisition order when modifying runtime
+registration. Do not treat every reorder as a regression by assertion. Verify
+the actual injected client/auth/exporter and layer memoization path.
 
-Scoped exception (do not flag): bare `Atom.make` is fine for **static values,
-local UI state** (`Atom.make(false)`), derived atoms (`Atom.make((get) => ...)`),
-and effects that don't go through the app's client (e.g. framework server
-functions with their own transport).
+**Proof:** Observe the complete request and trace path, including parent spans,
+authentication, and flush ownership. Local runtime/shim names are repository
+conventions, not generic upstream API requirements.
 
-Related: the shared runtime's **global layer registration order is
-load-bearing** — layers that wrap the HTTP transport (auth-injecting fetch)
-must be added before layers that consume it, or the memoized layer graph caches
-the unwrapped transport (symptom: every API call unauthenticated). Treat
-reorderings of `addGlobalLayer` calls as regressions.
+## ATOM-04 — Separate retention, freshness, and invalidation
 
-## 3. Query Atoms: `Atom.family` Keyed by a Canonical String, With a TTL
+**Correctness.** `Atom.setIdleTTL` controls disposal after inactivity. It does
+not establish a freshness interval for an actively observed result. `keepAlive`
+retains state for the registry lifetime, not beyond registry disposal.
+Choose retention from remount behavior and memory use; choose refresh/invalidation
+from the product's freshness contract. Do not mandate a TTL on every atom.
 
-Parameterized query atoms are module-level `Atom.family`s keyed by a
-**canonically serialized string** (stable stringify of the input), so every
-consumer passing equal inputs shares one atom → one fetch. Set an explicit
-idle TTL / stale time per atom, with a rationale.
+Mutation reactivity keys must reach the queries they are intended to invalidate.
+Include related lists, counts, and details when their data actually changes.
 
-```typescript
-// GOOD
-const detailFamily = Atom.family((sha: string) =>
-  AppApiClient.query("integrations", "commitDetail", { params: { sha }, timeToLive: "5 minutes" }))
+**Proof:** Check remount before/after idle disposal, active stale data, and the
+queries refreshed by a successful mutation. Do not infer data freshness from a
+property named `timeToLive` without following its implementation.
 
-const queryFamily = Atom.family((key: string) => {
-  const atom = AppApiClient.runtime.atom(decodeAndRun(key))
-  return Atom.setIdleTTL(atom, staleTime)
-})
-export const getQueryAtom = (input: Input) => queryFamily(encodeKey(input))
+## ATOM-05 — Model waiting alongside the current result
 
-// BAD — object key: every call site creates a distinct family member
-const queryFamily = Atom.family((input: Input) => ...)
-```
+**Correctness.** `AsyncResult` has Initial, Success, and Failure variants;
+`waiting` is an independent flag. A Success may retain useful data during
+refresh, and Failure can carry previous success. Rendering solely on waiting can
+discard usable data; rendering only success can hide initial/error conditions.
+Choose initial loading, background refresh, stale-error, empty-success, and
+terminal-failure behavior deliberately.
 
-## 4. Mutations: `useAtomSet(..., { mode: "promiseExit" })` + `Exit` Branching
+Use the actual local builder or upstream matching APIs, including an appropriate
+terminal branch. Guard success-value access. A local source that cannot fail may
+legitimately produce only success, but that claim must match its real lifecycle.
 
-Mutations are consumed with `mode: "promiseExit"` and the result handled by
-branching on the `Exit` — not try/catch, not assuming success:
+**Proof:** Exercise initial load, refresh with previous success, refresh failure,
+and recovery. Inspect failure causes rather than reducing all interruptions to
+user-facing errors. Do not invent methods on a repository's Result shim.
 
-```typescript
-// GOOD
-const createRule = useAtomSet(AppApiClient.mutation("alerts", "createRule"), {
-  mode: "promiseExit",
-})
-const exit = await createRule({ payload: buildRuleRequest(form), reactivityKeys: ["alertRules"] })
-if (Exit.isSuccess(exit)) toast.success("Created")
-else toast.error(getExitErrorMessage(exit, "Failed to create rule"))
-```
+## ATOM-06 — Handle mutation outcomes and overlapping work
 
-Two paired rules:
+**Correctness / optional simplification.** `useAtomSet(..., { mode: "promiseExit" })`
+preserves the full outcome for explicit success/failure handling. The supported
+`promise` mode is appropriate for an intentional throwing Promise boundary.
+Whichever mode is used, success UI must follow successful completion; expected
+errors, defects, and cancellation need deliberate presentation behavior.
 
-- **`Schema.Class` payloads need `new` at the top level** — `payload: new
-  UpdateRequest({...})`. A wholly-plain object fails the client encoder (class
-  identity check) and dies as a defect **before any network request**; the UI
-  sees only a generic failure. Nested class fields inside a `new` outer
-  constructor are auto-constructed from plain literals — don't flag those. See
-  `schema.md` §2.
-- **`reactivityKeys` must pair** — the keys passed with a mutation must match
-  the keys registered on the query atoms it invalidates, or the UI goes stale
-  after writes.
+Review overlapping submissions, shared mutation atoms, optimistic updates, and
+stale request completion. Check installed `Atom.fn` concurrency/cancellation
+semantics before prescribing a lock, a new family, or a reset. Class payloads
+must meet [schema construction](schema.md) rules.
 
-## 5. Handle All `Result` States
+**Proof:** Complete two requests in the opposite order, reject one, and unmount
+or change the input while work is pending. Verify the intended result wins,
+side effects are not duplicated, and rollback does not erase newer state.
 
-Async atoms resolve to a `Result`/`AsyncResult` (initial / waiting / success /
-failure). Render every state through the app's builder — never assume success.
+## ATOM-07 — Own registries, subscriptions, and account transitions
 
-```typescript
-// GOOD (method names per the app's shim)
-const result = useAtomValue(userAtom)
-return Result.builder(result)
-  .onInitial(() => <Spinner />)
-  .onError((error) => <ErrorState error={error} />)
-  .onSuccess((user) => <UserCard user={user} />)
-  .orElse(() => null)
+**Correctness.** Registries own atom values and cleanup. SSR/request state must
+have an appropriate isolated owner; module-level atom identity alone does not
+imply shared values when registries differ. Conversely, a shared default registry
+can retain data across consumers. Inspect provider placement and runtime memo-map
+sharing together, especially for server rendering and account/tenant changes.
 
-// BAD — ignores loading / error
-const result = useAtomValue(userAtom)
-return <UserCard user={result.value} />
-```
+`RegistryProvider` captures initial options once in the checked release; changing
+`initialValues` later does not reinitialize it. Explicitly reset/replace the
+appropriate state on security-context changes. Side effects registered in atom
+reads need finalizers; effect-backed resources should use their scope correctly.
 
-Flag: raw `result.value` access without a success guard, and a builder chain
-missing its terminal (`orElse` / `render`). A hook that deliberately returns
-`Result.success(...)` unconditionally because its data source cannot fail
-(e.g. a local live-query bridge) is fine when commented.
+**Proof:** Test independent registries, disposal, remount, and account/tenant
+switching with work in flight. Verify event listeners/timers/fibers are released
+and obsolete data cannot repopulate the new session.
 
-## 6. `keepAlive` for Persistent State
+## ATOM-08 — Preserve contracts across external reactive bridges
 
-Atoms holding global state that must survive component unmount should be marked
-`Atom.keepAlive`. Otherwise the atom resets when the last subscriber unmounts.
+**Correctness / repository policy.** A bridge to a database sync engine or another
+reactive source must preserve its real loading/error/completion semantics and
+dispose its subscription. Reusing the application's result representation can
+reduce UI duplication, but do not fabricate success to hide an unavailable or
+failed source. Use existing row/domain schemas and mapping ownership.
 
-```typescript
-// GOOD
-const sessionAtom = Atom.make(initialSession).pipe(Atom.keepAlive)
-```
-
-## 7. Clean Up Side Effects with Finalizers
-
-Atoms that register side effects (event listeners, subscriptions, timers)
-should release them with `get.addFinalizer(...)`.
-
-```typescript
-// GOOD
-const resizeAtom = Atom.make((get) => {
-  const handler = () => get.setSelf(window.innerWidth)
-  window.addEventListener("resize", handler)
-  get.addFinalizer(() => window.removeEventListener("resize", handler))
-  return window.innerWidth
-})
-```
-
-## 8. External Sync Layers Re-Wrap into `Result`
-
-When part of the data moves to a sync engine (Electric/TanStack DB live
-queries) alongside atom-based fetching, the bridge hooks should re-wrap sync
-results into the same `Result` shape (`Result.initial(true)` while loading,
-`Result.success(...)` when live) so downstream components keep the single
-`Result.builder` rendering path. Row schemas mirror the DB columns exactly and
-row→document mappers mirror the server's mappers, decoding branded ids through
-their schemas.
+**Proof:** Trace initial snapshot, updates, source failure, reconnection, and
+unmount. A particular sync engine or Result wrapper is conditional project
+context; generic Effect applications need not introduce either.

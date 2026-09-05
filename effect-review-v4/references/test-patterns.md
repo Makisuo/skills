@@ -1,167 +1,122 @@
-# Test Patterns Checklist (v4)
+# Tests that establish Effect behavior
 
-Effect-shaped code is tested with `@effect/vitest`. **Scope**: `@effect/vitest`
-is for tests that run Effects, need layers, or use `TestClock`. Pure functions,
-React components, and DOM tests correctly use plain `vitest` — do not flag
-them.
+Use the project's test runner and resolved `@effect/vitest` implementation.
+Review consequential behavior, not one test per combinator. The complete
+[schema/layer/atom examples](../examples/schema-layer-atom.test.ts) are executable
+compatibility and regression checks, not a requirement to duplicate library tests
+in every application.
 
-## 1. `it.effect` vs `it.live` — the TestClock Split ⚠️
+## TEST-01 — Use the harness that owns the required services and scope
 
-`it.effect` auto-provides a **TestClock**: time never advances on its own. That
-makes it wrong for real-async tests — a real `Effect.timeout`, an exponential
-retry schedule, or anything waiting on actual event-loop settling will hang or
-mis-fire under `it.effect`.
+**Compatibility / correctness.** In rc.111, both `it.effect` and `it.live`
+automatically provide Scope; `it.scoped` is obsolete. `it.effect` supplies test
+services, including TestClock; `it.live` keeps the live clock. Prefer these for
+tests naturally expressed as Effects with layers/resources. Plain Vitest is
+appropriate for pure functions, React/DOM, and deliberate runtime/Promise adapter
+tests. Running an Effect at the boundary under test is not inherently a defect.
+`expect` and `assert` are both supported; follow local style without a finding.
 
-- **Deterministic time-based logic** → `it.effect` + drive time with
-  `TestClock.setTime` / `TestClock.adjust`.
-- **Real timeouts / retry backoff / real async** → `it.live` (ideally with a
-  comment saying why).
+**Proof:** Check the installed harness and patches, then verify resources close
+at the intended per-test or suite boundary. Do not recommend removed test APIs.
 
-```typescript
-// GOOD — deterministic
-it.effect("escalates after 5s", () =>
-  Effect.gen(function* () {
-    const fiber = yield* Effect.forkChild(slowEffect.pipe(Effect.timeout("5 seconds")))
-    yield* TestClock.adjust("5 seconds")
-    const exit = yield* Fiber.await(fiber)
-    assert.isTrue(Exit.isFailure(exit))
-  }),
-)
+## TEST-02 — Drive Effect time deterministically
 
-// GOOD — real backoff needs the real clock
-// Runs under it.live: the retry schedule uses real exponential backoff.
-it.live("retries transient 503s twice", () => Effect.gen(function* () { ... }))
-```
+**Correctness / optional simplification.** TestClock controls Effect sleep,
+timeouts, schedules, and retry delays. Fork the operation, establish the relevant
+work has started, advance the clock, and join/await the outcome. Use a barrier
+or observable attempt state when the test needs specific ordering. Ordinary
+Promise completion does not inherently require live time.
 
-Flag: an `it.effect` test exercising a real `Effect.timeout` / `Effect.retry`
-with an exponential schedule and no TestClock control. Also flag the reverse —
-`it.live` used for logic that could be deterministic under TestClock.
+Use `it.live` for actual wall-clock integration requirements that the test is
+meant to exercise. Avoid a broad rule sending exponential retry tests to the live
+clock, or flagging every existing live test as broken.
 
-`TestClock` lives in **`effect/testing`** (not a top-level export). Use
-`it.scoped` for effects requiring a `Scope`.
+**Proof:** Assert attempts, eligibility, eventual outcome and timing where timing
+is the contract. Distinguish per-attempt timeout from total deadline. Check no
+extra retry or pending work occurs after success, terminal failure, or interruption.
 
-## 2. Use `it.effect`, Not `runSync`/`runPromise` in Plain `it`
+## TEST-03 — Assert typed failure, defect, and interruption separately
 
-```typescript
-// GOOD
-import { assert, describe, it } from "@effect/vitest"
-import { Effect } from "effect"
+**Correctness.** For expected failures, prove `Exit.hasFails` and inspect the typed
+error via `Exit.findErrorOption`, then assert its tag and useful context. Check
+defects/interruptions separately when they must be absent. A failure can contain
+more than one reason; first-error extraction alone is not proof of the full cause.
 
-describe("UserService", () => {
-  it.effect("returns the user", () =>
-    Effect.gen(function* () {
-      const service = yield* UserService
-      const user = yield* service.findById(id)
-      assert.strictEqual(user.name, "Alice")
-    }),
-  )
-})
+Do not fall back to `Cause.squash` in a helper meant to prove typed failure: a
+tagged object inside `Effect.die` could then pass the same test as `Effect.fail`.
+Squashing is suitable only where intentional presentation loss is under test.
 
-// BAD — runSync inside a plain it
-it("returns the user", () => {
-  const user = Effect.runSync(UserService.findById(id))
-  expect(user.name).toBe("Alice")
-})
-```
+**Proof:** A regression changing `fail(error)` to `die(error)` must fail the
+expected-error test. Cover continued failure after observation, intentional
+fallback values, and the public mapper/envelope where behavior crosses a boundary.
 
-Use `assert.*` inside Effect tests (`assert.strictEqual`,
-`assert.deepStrictEqual`, `assert.isTrue(Exit.isFailure(exit))`), imported from
-`@effect/vitest` — not vitest's `expect`.
+## TEST-04 — Inject dependencies at the point they are consumed
 
-## 3. Provide Dependencies with Layers
+**Correctness.** Provide a mock into the layer acquiring or using that dependency.
+Merging sibling layers is not general dependency injection; an internally supplied
+live provider can also defeat a test stub. Use `Layer.succeed` for explicit stubs
+and the real composition for the seam being verified.
 
-- `it.layer(TestLayer)((it) => { ... })` when a block of tests shares one
-  stateless layer.
-- Otherwise a `makeLayer(...)` helper composing `Layer.provide` /
-  `Layer.mergeAll` per test, with dependencies stubbed via
-  `Layer.succeed(Service, stubShape)` (a hand-written object satisfying the
-  service shape).
-- Config is stubbed with `ConfigProvider.layer(ConfigProvider.fromUnknown({ ... }))`
-  and the typed Env derived through the real Env layer
-  (`Env.layer.pipe(Layer.provide(configLive))`) — so tests exercise the actual
-  config decoding.
+Shared `it.layer` suites can share acquired state and scope. Use fresh per-test
+state or deliberate reset when isolation requires it. Test actual configuration
+decoding with `ConfigProvider` when validating configuration, rather than replacing
+the entire decoded service and claiming coverage of parsing.
 
-```typescript
-// GOOD
-const makeLayer = (testDb: TestDb) =>
-  MyService.layer.pipe(
-    Layer.provide(Layer.mergeAll(testDb.layer, Env.layer.pipe(Layer.provide(makeConfig())))),
-    Layer.provide(Layer.succeed(WarehouseService, warehouseStub)),
-  )
-```
+**Proof:** Assert the expected stub was used, verify no real network escapes,
+and run relevant cases in isolation and together when shared state is in question.
+Do not add one shared mutable test layer merely to make setup shorter.
 
-## 4. Test Databases — Embedded Layer + Cleanup
+## TEST-05 — Use realistic transport and database seams
 
-DB-backed tests use the repo's embedded test-DB helper (e.g. an in-memory
-PGlite layer that applies the real migrations — maple:
-`createTestDb()` in `apps/api/src/lib/test-pglite.ts`) rather than hand-rolled
-Postgres/migration setups. Track created DBs and clean up in `afterEach`. Raw
-SQL helpers take positional `$1` placeholders.
+**Correctness / repository policy.** Prefer the injected HTTP client or
+`FetchHttpClient.Fetch` over global mutation when the code uses that service.
+Return real Response objects when using the fetch adapter. Build a fresh response
+per request; reusing a consumed body can create test-only errors. Model signals,
+status, headers, and body decoding as required by the behavior under test.
 
-## 5. Stub HTTP by Providing `FetchHttpClient.Fetch`
+Use the repository's established database fixture/migration/cleanup facilities
+for DB integration tests; unit stubs are appropriate for narrower service tests.
+For Maple, resolve the current helper from its instructions (currently
+`apps/api/src/platform/test-pglite.ts`), not a remembered path. Preserve actual
+driver and transaction semantics in tests intended to cover them.
 
-Never mutate `globalThis.fetch` or `vi.stubGlobal("fetch", ...)` — the global
-resolves non-deterministically across tests. Provide the fetch service
-directly, returning **real `new Response(...)` objects** (HttpClient wraps the
-response and needs real headers/body):
+**Proof:** Distinguish transport rejection, HTTP status failure, invalid body,
+absence, and unavailable storage. Assert attempts/writes/rollback effects when
+retries or error mapping could duplicate or misclassify work.
 
-```typescript
-// GOOD
-const mockResponse = (body: string, status: number): Response => new Response(body, { status })
-const makeFetch = (...responses: Response[]) => {
-  let calls = 0
-  const impl: typeof fetch = async () => responses[Math.min(calls++, responses.length - 1)]
-  return { impl, callCount: () => calls }
-}
+## TEST-06 — Exercise schema representations and producer contracts
 
-effect.pipe(Effect.provideService(FetchHttpClient.Fetch, stub.impl))
-// or in the layer graph:
-Layer.mergeAll(makeLayer(testDb), Layer.succeed(FetchHttpClient.Fetch, stub.impl))
-```
+**Correctness.** Test raw decoding, fallible typed construction, and encoding
+when those are distinct paths. Preserve optionality and class-identity cases
+from [schema rules](schema.md). Generate branded fixtures through the actual
+schema with valid inputs; never cast malformed strings to make a fixture pass.
 
-Retry-policy tests assert **both** the mapped error tag and the attempt count
-(via the call-counting wrapper) — and run under `it.live` (see §1).
+**Proof:** Check absent/undefined/null, constructor defaults versus decode
+transforms, nested classes, invalid constructor checks, and boundary error
+classification. Round-trip only when the contract promises both directions.
+Audit real producers before changing optionality even when a local test passes.
 
-## 6. Branded-ID Fixtures Decode Through the Schema
+## TEST-07 — Test ownership and observable side effects
 
-Fixtures for branded ids are produced with
-`Schema.decodeUnknownSync(BrandId)(literal)` where the literal is in the
-brand's **real format** — a valid UUIDv4 shape (version nibble `4`, variant
-nibble `8`) for UUID brands, the real prefix format for string brands. Never a
-bare cast.
+**Correctness.** Add or request targeted coverage when a change affects resource
+release, interruption, shared acquisition, concurrent state, retry safety, cache
+isolation, or a public failure contract. A new method without a dedicated unit
+test is not automatically a finding if meaningful existing coverage exercises it.
 
-```typescript
-// GOOD
-const ruleId = Schema.decodeUnknownSync(AlertRuleId)("11111111-1111-4111-8111-111111111111")
-const orgId = Schema.decodeUnknownSync(OrgId)("org_test_fixture")
+**Proof:** Establish a failure mode or material unverified invariant. Check
+acquire/release counts and order; pending child cancellation; cross-tenant keys;
+late completion; duplicate writes; and active versus idle cache behavior only as
+relevant. Existing correct tests should not be expanded merely to mirror syntax.
 
-// BAD — brand bypass, and "rule-1" would fail the isUUID check anyway
-const ruleId = "rule-1" as AlertRuleId
-```
+## TEST-08 — Validate examples and property-test integrations against runtime
 
-## 7. Error Assertions
+**Compatibility.** Typecheck complete examples against the resolved package,
+compiler options, and relevant patches; run behavior-sensitive examples too.
+Do not assume an unstable type signature proves runtime support. rc.111 Vitest
+property-test types admit schemas but its implementation rejects direct Schema
+inputs; use a verified FastCheck Arbitrary path for that version.
 
-Extract errors from exits with `Exit.findErrorOption` (falling back to
-`Cause.squash(exit.cause)`), and assert the **tagged `_tag`**, not the message
-string:
-
-```typescript
-// GOOD
-const exit = yield* Effect.exit(service.upsert(bad))
-assert.isTrue(Exit.isFailure(exit))
-const error = getError(exit)
-assert.strictEqual(error._tag, "@myorg/http/errors/ValidationError")
-```
-
-## 8. Assess Coverage Gaps
-
-When reviewing a diff, flag missing coverage:
-- New public service methods with no test.
-- Error paths (each tagged error a method can fail with) left untested —
-  assert the tag AND the side-effect counts (fetch attempts, rows written),
-  not just success/failure.
-- New branded-type validators / schema decoders without a decode/encode test —
-  especially round-trips for schemas that are both decoded and constructed
-  (the `optionalKey` present-vs-absent distinction only surfaces in encode/
-  construct tests).
-- Retry/timeout policies without an attempt-count assertion.
+**Proof:** State the command, resolved version, outcome, and scope of validation.
+A compatibility fixture proves an API or small invariant, not full application
+integration or the absence of broader bugs. Keep baseline/candidate evaluation
+artifacts outside the installed skill.

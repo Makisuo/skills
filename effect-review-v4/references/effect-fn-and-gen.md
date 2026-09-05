@@ -1,193 +1,49 @@
-# Effect.fn & Generators Checklist (v4)
+# Effect functions and construction
 
-Effect v4 idiom: write effectful code with `Effect.gen` and `Effect.fn("name")`,
-then attach extra behaviour with combinators.
+Read [errors-and-cause.md](errors-and-cause.md) for outcomes and [resources-concurrency.md](resources-concurrency.md) for lifetime. Syntax alone is not a correctness finding.
 
-## 1. APIs That Do NOT Exist in the v4 Beta ⚠️
+## FN-01 — Choose a function boundary intentionally
 
-Never recommend these — and recognize the confusing errors they produce when
-someone writes them from v3 muscle memory. When unsure whether an API exists,
-grep the repo's vendored Effect source (the ground-truth path from the repo
-conventions pass); do not trust memory.
+**Optional simplification / observability policy.** In rc.111:
 
-| v3 habit | v4 reality | Symptom if used anyway |
-|---|---|---|
-| `Effect.fork` | `Effect.forkChild` (scoped), `Effect.forkScoped`, `Effect.forkDetach` (daemon), `Effect.forkIn` | `Effect.fork` is `undefined` → "not iterable" at runtime |
-| `Effect.iterate` / `Effect.loop` | absent — imperative `while (true)` loop (with a comment) is the accepted form | TS2339 |
-| `Effect.catchAll` | `Effect.catch` | TS2339 on `catchAll` **plus** cascading `unknown`/`never` iterator errors on the surrounding `yield*` |
-| `Effect.timeoutFail` | `Effect.timeoutOrElse({ duration, orElse })` | TS2339 |
-| `Effect.try(() => ...)` bare thunk | `Effect.try({ try, catch })` object form only (`Effect.sync` is still bare-thunk) | TS2345 "not assignable to `{ try; catch }`" |
+| Form | Stack boundary | New span |
+| --- | --- | --- |
+| `Effect.fn("operation")(body, ...transforms)` | Yes | Yes |
+| `Effect.fn(body, ...transforms)` | Yes | No |
+| `Effect.fnUntraced(body, ...transforms)` | No | No |
 
-Platform note: `FileSystem` / `Path` are core modules (`effect/FileSystem`,
-`effect/Path`) with **bare tags** — `yield* FileSystem`, not
-`FileSystem.FileSystem` from `@effect/platform`.
+Use a readable operation name where the span is useful; `Service.method` is a convention, not an API requirement. Consider hot-path span volume. A simple Effect-returning function, reusable Effect value, short combinator chain, or function factory may be clearer than a generator wrapper. Do not require an extra boundary merely because a function returns Effect.
 
-## 2. Functions Returning an Effect Use `Effect.fn`
+**Proof required:** a trace/stack requirement or concrete simplification. Adding spans changes volume; removing/renaming spans can affect consumers. Verify those risks rather than calling wrappers cosmetic.
 
-A function that returns an Effect should be wrapped with `Effect.fn` (named,
-traced) or `Effect.fnUntraced` (no span). **Do not** write a plain function that
-returns a bare `Effect.gen` — it loses the stack frame and tracing span.
+## FN-02 — Compose the Effect, not the function value
 
-```typescript
-// GOOD — named + traced
-export const fetchUser = Effect.fn("UserService.fetchUser")(function* (id: UserId) {
-  const repo = yield* UserRepo
-  return yield* repo.findById(id)
-})
+**Correctness.** `Effect.fn` transforms receive `(effect, ...originalArguments)`. They attach behavior while retaining inputs. `.pipe` on the returned function is not `.pipe` on an Effect; `f(input).pipe(...)` is valid call-site composition. A standalone `Effect.gen` also supports `.pipe`.
 
-// GOOD — pure validator / row mapper / hot path: no span wanted
-const parseRow = Effect.fnUntraced(function* (raw: string) {
-  return yield* decodeRow(raw)
-})
+Observation and recovery differ: adding a log-only `catch` changes failure to successful `void`. Use `tapError`/`tapCause` where failure must continue. Generator style helps branching and dependent steps; short combinators remain appropriate.
 
-// BAD — function returning a bare Effect.gen
-const fetchUser = (id: UserId) =>
-  Effect.gen(function* () {
-    const repo = yield* UserRepo
-    return yield* repo.findById(id)
-  })
-```
+**Proof required:** the value/type at the composition site and changed outcome. Where annotation is necessary, use a verified signature such as `Effect.fn.Return<A, E, R>`, not an unchecked cast.
 
-The name string becomes the span name — use `"Service.method"` for service
-methods. A module-level `Effect.fn` const sometimes needs an explicit
-return-type annotation (`: (...) => Effect.Effect<A, E, R> = Effect.fn(...)`)
-when inference cycles through the module.
+## FN-03 — Preserve laziness at external boundaries
 
-## 3. Attach Combinators as `Effect.fn` Arguments
+**Correctness.** Side effects should occur when work runs. `sync` captures synchronous work, `suspend` defers construction, `try` maps expected throws, and `tryPromise` bridges rejectable APIs. `promise` is for operations whose rejection should be a defect. Pass supplied abort signals to cooperating APIs. Callback adapters must complete once and release listeners on interruption.
 
-Extra behaviour (`Effect.catch`, `Effect.annotateLogs`, `Effect.withSpan`, …)
-goes as **additional arguments** to `Effect.fn`, not `.pipe` on the result.
-The trailing pipeables receive **`(effect, ...originalArgs)`** — so a per-call
-handler that needs the function's input takes it as its second parameter:
+`async` or `try/catch` at a host/SDK bridge is not automatically wrong. Inspect cancellation, laziness, expected failure typing, and runtime context. Running an Effect back to Promise inside domain code can bypass the caller's scope/services; investigate the boundary instead of banning keywords. Generator-local `try/catch` does not replace Effect error handling for yielded failures.
 
-```typescript
-// GOOD
-export const effectFn = Effect.fn("effectFn")(
-  function* (n: number) {
-    return yield* doWork(n)
-  },
-  Effect.catch((error) => Effect.logError(`failed: ${error}`)),
-  Effect.annotateLogs({ method: "effectFn" }),
-)
+**Proof required:** trace when work starts, how exceptions enter the program, and what cancellation stops. The injected HTTP example is in [errors-and-http.ts](../examples/errors-and-http.ts).
 
-// GOOD — pipeable that uses the original argument
-export const process = Effect.fn("process")(
-  function* (input: Input) { ... },
-  (effect, input) => Effect.catchCause(effect, (cause) =>
-    Effect.logError("process failed", { input: input.id, cause })),
-)
+## FN-04 — Preserve control flow and testable capabilities
 
-// BAD — .pipe on the wrapped fn
-export const effectFn = Effect.fn("effectFn")(function* (n: number) {
-  return yield* doWork(n)
-}).pipe(Effect.catch((e) => Effect.logError(String(e))))
-```
+**Correctness / optional simplification.** Use `return yield*` for terminal failures when TypeScript needs to see the branch end. Early-return pagination and accumulator loops may remain imperative. rc.111 also provides `whileLoop`, `findFirst`, and `repeat`; `iterate` and `loop` are absent in this checked release. Do not infer that every loop requires replacement.
 
-A standalone `Effect.gen` block, by contrast, *is* extended with `.pipe`.
+Use clock/time/random/config capabilities when those inputs need control. Reading current time differs from converting a supplied timestamp: `new Date(milliseconds)` is not a clock read. Respect repository database-conversion helpers. Native time in actual host glue can be appropriate.
 
-## 4. `return yield*` When Raising Errors
+**Proof required:** an observable determinism, control-flow, testability, or boundary issue. Generator-local mutation and exhaustive switches need no explanatory comment.
 
-Always `return` when yielding a terminal effect (an error, `Effect.fail`,
-`Effect.interrupt`) so TypeScript understands the generator stops there.
+## FN-05 — Verify imports and the actual release
 
-```typescript
-// GOOD
-Effect.gen(function* () {
-  if (!valid) {
-    return yield* new ValidationError({ message: "invalid input" })
-  }
-  return yield* process()
-})
+**Correctness.** rc.111 accepts both `Effect.try(thunk)` and options. `Effect.gen({ self: this }, body)` is the current bound-generator form. Core platform services live in `effect/FileSystem` and `effect/Path`; namespace imports use `FileSystem.FileSystem` / `Path.Path`, while named imports of those service exports use a bare identifier. A module namespace is not a service.
 
-// BAD — missing return; TS thinks execution continues
-Effect.gen(function* () {
-  if (!valid) {
-    yield* new ValidationError({ message: "invalid input" })
-  }
-  return yield* process()
-})
-```
+**Proof required:** complete imports, installed declarations, and a compiling replacement. Use [version-grounding.md](version-grounding.md), not a remembered v4 rename list.
 
-## 5. No `try` / `catch`
-
-Effect code never uses `try`/`catch`. Move errors into the Effect error channel.
-
-```typescript
-// GOOD
-const data = yield* Effect.tryPromise({
-  try: () => fetch(url).then((r) => r.json()),
-  catch: (cause) => new FetchError({ cause }),
-})
-
-// GOOD — capture an effect's outcome without throwing
-const outcome = yield* Effect.result(riskyEffect)
-
-// BAD
-try {
-  const res = await fetch(url)
-} catch (e) {
-  throw new Error("fetch failed")
-}
-```
-
-## 6. No `async` / `await`
-
-Service methods and Effect functions return `Effect`, never `Promise`. No
-`async`/`await` inside Effect implementations. Bridge Promise APIs with
-`Effect.promise` / `Effect.tryPromise`.
-
-```typescript
-// BAD
-const load = async (id: string) => {
-  const row = await db.query(id)
-  return row
-}
-```
-
-## 7. `Clock` Over `Date.now` / `new Date` — Inside the Effect Runtime
-
-Inside Effect code (services, handlers, generators), read time via the `Clock`
-module so it is testable (`TestClock` in tests).
-
-```typescript
-// GOOD
-const now = yield* Clock.currentTimeMillis
-
-// BAD — inside an Effect generator/service
-const now = Date.now()
-const ts = new Date()
-```
-
-Scope: this rule applies to code running **inside the Effect runtime**.
-`Date.now()` in outer non-Effect glue — a raw platform handler timing a
-diagnostic, a plain script — is fine; don't flag it.
-
-## 8. `Effect.gen` with `this` Uses the Options Object
-
-When a generator needs `this`, v4 takes an options object — not a bare `self`
-first argument.
-
-```typescript
-// GOOD (v4)
-class Service {
-  readonly base = 1
-  compute = Effect.gen({ self: this }, function* () {
-    return this.base + 1
-  })
-}
-
-// BAD — v3 signature
-compute = Effect.gen(this, function* () {
-  return this.base + 1
-})
-```
-
-## 9. Prefer `Effect.gen` / `Effect.fn` Over Bare Combinator Chains
-
-Imperative generator style is the v4 default — it reads like async/await and is
-easier to maintain than long `.pipe(Effect.flatMap(...), Effect.map(...))`
-chains. Reserve combinators for cross-cutting concerns layered onto a generator.
-
-Corollary (see `known-pitfalls.md`): genuine control-flow loops — cursor
-pagination, CAS-retry, poll-until-hit, accumulate-then-fail — stay as imperative
-`while` loops in v4 (no `iterate`/`loop`), ideally with a comment saying so.
+**rc.111 source anchors:** `Effect.ts` (`fn`, `fnUntraced`, `gen`, `whileLoop`, `try`, `promise`, `callback`); `FileSystem.ts` (`FileSystem`); `Path.ts` (`Path`). Revalidate after version/patch changes.
