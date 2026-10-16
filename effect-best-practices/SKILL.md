@@ -1,120 +1,128 @@
 ---
 name: effect-best-practices
 description: Enforces Effect-TS patterns for services, errors, layers, and atoms. Use when writing code with Effect.Service, Schema.TaggedError, Layer composition, or effect-atom React components.
-version: 1.0.0
 ---
 
 # Effect-TS Best Practices
 
 This skill enforces opinionated, consistent patterns for Effect-TS codebases. These patterns optimize for type safety, testability, observability, and maintainability.
 
-## Effect Language Server (Required)
+## Core Principles
 
-**The Effect Language Server is essential for Effect development.** It catches errors at edit-time that TypeScript alone cannot detect, provides Effect-specific refactors, and improves developer productivity.
+### Effect Type Signature
 
-### Setup
-
-1. Install:
-```bash
-npm install @effect/language-service --save-dev
+```
+Effect<Success, Error, Requirements>
+//      ↑        ↑       ↑
+//      |        |       └── Dependencies (provided via Layers)
+//      |        └── Expected errors (typed, must be handled)
+//      └── Success value
 ```
 
-2. Add to `tsconfig.json`:
-```json
-{
-  "compilerOptions": {
-    "plugins": [{ "name": "@effect/language-service" }]
-  }
-}
+### Data-First Piped Style
+
+**ALWAYS** prefer data-first pipe style for composition:
+
+```typescript
+// ✅ GOOD: Data-first with pipe
+const result = value.pipe(
+  Effect.map((n) => n * 2),
+  Effect.flatMap((n) => processValue(n)),
+  Effect.catchTag("NetworkError", () => Effect.succeed(fallback))
+)
+
+// ❌ BAD: Function-first style
+const result = Effect.catchTag(
+  Effect.flatMap(
+    Effect.map(value, (n) => n * 2),
+    (n) => processValue(n)
+  ),
+  "NetworkError",
+  () => Effect.succeed(fallback)
+)
 ```
 
-3. Configure your editor to use workspace TypeScript:
-   - **VSCode**: F1 → "TypeScript: Select TypeScript Version" → "Use Workspace Version"
-   - **JetBrains**: Settings → Languages & Frameworks → TypeScript → Use workspace version
+### "@effect/schema" is deprecated
 
-### Features
+Don't try to install nor import from "@effect/schema", it is deprecated.
+Instead just import from "effect" package.
 
-- **Diagnostics**: Detects 30+ Effect-specific issues (floating Effects, missing requirements, incorrect yield patterns)
-- **Quick Info**: Hover to see Effect type parameters (Success, Error, Requirements)
-- **Completions**: Auto-complete `Self`, Duration strings, Schema brands
-- **Refactors**: Convert async → Effect.gen, auto-compose Layers, transform to Schema
+```typescript
+// ✅ GOOD
+import { Schema } from "effect"
 
-### Build-Time Diagnostics
-
-For CI enforcement:
-```bash
-npx effect-language-service patch
+// ❌ BAD
+import { Schema } from "@effect/schema"
 ```
-
-See `references/language-server.md` for configuration options and CLI tools.
 
 ## Quick Reference: Critical Rules
 
-| Category | DO | DON'T |
-|----------|-----|-------|
-| Services | `Effect.Service` with `accessors: true` | `Context.Tag` for business logic |
-| Dependencies | `dependencies: [Dep.Default]` in service | Manual `Layer.provide` at usage sites |
-| Layers | `Layer.mergeAll` for flat composition | Deeply nested `Layer.provide` chains |
-| Layer Chaining | `Layer.provideMerge` for incremental composition | Multiple `Layer.provide` (creates nested types) |
-| Errors | `Schema.TaggedError` with `message` field | Plain classes or generic Error |
-| Error Specificity | `UserNotFoundError`, `SessionExpiredError` | Generic `NotFoundError`, `BadRequestError` |
-| Error Handling | `catchTag`/`catchTags` | `catchAll` or `mapError` |
-| IDs | `Schema.UUID.pipe(Schema.brand("@App/EntityId"))` | Plain `string` for entity IDs |
-| Functions | `Effect.fn("Service.method")` | Anonymous generators |
-| Logging | `Effect.log` with structured data | `console.log` |
-| Config | `Config.*` with validation | `process.env` directly |
-| Options | `Option.match` with both cases | `Option.getOrThrow` |
-| Nullability | `Option<T>` in domain types | `null`/`undefined` |
-| Atoms | `Atom.make` outside components | Creating atoms inside render |
-| Atom State | `Atom.keepAlive` for global state | Forgetting keepAlive for persistent state |
-| Atom Updates | `useAtomSet` in React components | `Atom.update` imperatively from React |
-| Atom Cleanup | `get.addFinalizer()` for side effects | Missing cleanup for event listeners |
-| Atom Results | `Result.builder` with `onErrorTag` | Ignoring loading/error states |
+| Category          | DO                                                      | DON'T                                      |
+| ----------------- | ------------------------------------------------------- | ------------------------------------------ |
+| Services          | `Effect.Service`                                        | `Context.Tag` for business logic           |
+| Dependencies      | `dependencies: [Dep.Default]` at the top of the service | Manual `Layer.provide` at usage sites      |
+| Errors            | `Schema.TaggedError` with `message` and `cause` fields  | Plain classes or generic Error             |
+| Error Specificity | `UserNotFoundError`, `SessionExpiredError`              | Generic `NotFoundError`, `BadRequestError` |
+| Error Handling    | `catchTag` (supports multiple tags) / `catchTags`       | `catchAll` or `mapError`                   |
+| IDs               | `Schema.UUID.pipe(Schema.brand("@App/EntityId"))`       | Plain `string` for entity IDs              |
+| Functions         | `Effect.fn("Service.method")`                           | Anonymous generators                       |
+| Logging           | `Effect.log` with structured data                       | `console.log`                              |
+| Config            | `Config.*` with validation                              | `process.env` directly                     |
+| Options           | `Option.match` with both cases                          | `Option.getOrThrow`                        |
+| Nullability       | `Option<T>` in domain types                             | `null`/`undefined`                         |
+| Atoms             | `Atom.make` outside components                          | Creating atoms inside render               |
+| Atom State        | `Atom.keepAlive` for global state                       | Forgetting keepAlive for persistent state  |
+| Atom Updates      | `useAtomSet` in React components                        | `Atom.update` imperatively from React      |
+| Atom Cleanup      | `get.addFinalizer()` for side effects                   | Missing cleanup for event listeners        |
+| Atom Results      | `Result.builder` with `onErrorTag`                      | Ignoring loading/error states              |
 
 ## Service Definition Pattern
 
 **Always use `Effect.Service`** for business logic services. This provides automatic accessors, built-in `Default` layer, and proper dependency declaration.
 
 ```typescript
-import { Effect } from "effect"
+import { Effect } from "effect";
 
 export class UserService extends Effect.Service<UserService>()("UserService", {
-    accessors: true,
-    dependencies: [UserRepo.Default, CacheService.Default],
-    effect: Effect.gen(function* () {
-        const repo = yield* UserRepo
-        const cache = yield* CacheService
+  accessors: true,
+  dependencies: [UserRepo.Default, CacheService.Default],
+  effect: Effect.gen(function* () {
+    const repo = yield* UserRepo;
+    const cache = yield* CacheService;
 
-        const findById = Effect.fn("UserService.findById")(function* (id: UserId) {
-            const cached = yield* cache.get(id)
-            if (Option.isSome(cached)) return cached.value
+    const findById = Effect.fn("UserService.findById")(function* (id: UserId) {
+      const cached = yield* cache.get(id);
+      if (Option.isSome(cached)) return cached.value;
 
-            const user = yield* repo.findById(id)
-            yield* cache.set(id, user)
-            return user
-        })
+      const user = yield* repo.findById(id);
+      yield* cache.set(id, user);
+      return user;
+    });
 
-        const create = Effect.fn("UserService.create")(function* (data: CreateUserInput) {
-            const user = yield* repo.create(data)
-            yield* Effect.log("User created", { userId: user.id })
-            return user
-        })
+    const create = Effect.fn("UserService.create")(function* (
+      data: CreateUserInput,
+    ) {
+      const user = yield* repo.create(data);
+      yield* Effect.log("User created", { userId: user.id });
+      return user;
+    });
 
-        return { findById, create }
-    }),
+    return { findById, create };
+  }),
 }) {}
 
 // Usage - dependencies are already wired
 const program = Effect.gen(function* () {
-    const user = yield* UserService.findById(userId)
-    return user
-})
+  const user = yield* UserService.findById(userId);
+  return user;
+});
 
 // At app root
-const MainLive = Layer.mergeAll(UserService.Default, OtherService.Default)
+const MainLive = Layer.mergeAll(UserService.Default, OtherService.Default);
 ```
 
 **When `Context.Tag` is acceptable:**
+
 - Infrastructure with runtime injection (Cloudflare KV, worker bindings)
 - Factory patterns where resources are provided externally
 
@@ -122,137 +130,109 @@ See `references/service-patterns.md` for detailed patterns.
 
 ## Error Definition Pattern
 
-**Always use `Schema.TaggedError`** for errors. This makes them serializable (required for RPC) and provides consistent structure.
+**Always use `Schema.TaggedError`** for errors. This makes them serializable (required for RPC), provides consistent structure, and makes them **yieldable** — no `Effect.fail()` wrapper needed since `TaggedError` instances implement the `Effect` interface directly.
 
 ```typescript
-import { Schema } from "effect"
-import { HttpApiSchema } from "@effect/platform"
+import { Schema } from "effect";
+import { HttpApiSchema } from "@effect/platform";
 
 export class UserNotFoundError extends Schema.TaggedError<UserNotFoundError>()(
-    "UserNotFoundError",
-    {
-        userId: UserId,
-        message: Schema.String,
-    },
-    HttpApiSchema.annotations({ status: 404 }),
+  "UserNotFoundError",
+  {
+    userId: UserId,
+    message: Schema.String,
+  },
+  HttpApiSchema.annotations({ status: 404 }),
 ) {}
 
 export class UserCreateError extends Schema.TaggedError<UserCreateError>()(
-    "UserCreateError",
-    {
-        message: Schema.String,
-        cause: Schema.optional(Schema.String),
-    },
-    HttpApiSchema.annotations({ status: 400 }),
+  "UserCreateError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.String),
+  },
+  HttpApiSchema.annotations({ status: 400 }),
 ) {}
 ```
 
 **Error handling - use `catchTag`/`catchTags`:**
 
 ```typescript
-// CORRECT - preserves type information
+// ✅ CORRECT - single tag
 yield* repo.findById(id).pipe(
     Effect.catchTag("DatabaseError", (err) =>
-        Effect.fail(new UserNotFoundError({ userId: id, message: "Lookup failed" }))
+      new UserNotFoundError({ userId: id, message: "Lookup failed" }),
     ),
-    Effect.catchTag("ConnectionError", (err) =>
-        Effect.fail(new ServiceUnavailableError({ message: "Database unreachable" }))
-    ),
-)
+  );
 
-// CORRECT - multiple tags at once
+// ✅ CORRECT - multiple tags, same handler (catchTag accepts variadic tags)
+yield* effect.pipe(
+    Effect.catchTag(
+      "TokenExpiredError",
+      "TokenInvalidError",
+      "MissingTokenError",
+      () => new AuthError({ message: "Authentication failed" }),
+    ),
+  );
+
+// ✅ CORRECT - multiple tags, different handlers (use catchTags)
 yield* effect.pipe(
     Effect.catchTags({
-        DatabaseError: (err) => Effect.fail(new UserNotFoundError({ userId: id, message: err.message })),
-        ValidationError: (err) => Effect.fail(new InvalidEmailError({ email: input.email, message: err.message })),
+      DatabaseError: (err) =>
+        new UserNotFoundError({ userId: id, message: err.message }),
+      ValidationError: (err) =>
+        new InvalidEmailError({ email: input.email, message: err.message }),
     }),
-)
+  );
 ```
 
 ### Prefer Explicit Over Generic Errors
 
-**Every distinct failure reason deserves its own error type.** Don't collapse multiple failure modes into generic HTTP errors.
+**Every distinct failure reason deserves its own error type.** Don't collapse multiple failure modes into generic HTTP errors like `NotFoundError` or `BadRequestError`.
 
-```typescript
-// WRONG - Generic errors lose information
-export class NotFoundError extends Schema.TaggedError<NotFoundError>()(
-    "NotFoundError",
-    { message: Schema.String },
-    HttpApiSchema.annotations({ status: 404 }),
-) {}
+- `UserNotFoundError` with `userId` → Frontend shows "User doesn't exist"
+- `ChannelNotFoundError` with `channelId` → Frontend shows "Channel was deleted"
+- `SessionExpiredError` with `expiredAt` → Frontend shows "Session expired, please log in"
 
-// Then mapping everything to it:
-Effect.catchTags({
-    UserNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
-    ChannelNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
-    MessageNotFoundError: (err) => Effect.fail(new NotFoundError({ message: "Not found" })),
-})
-// Frontend gets useless: { _tag: "NotFoundError", message: "Not found" }
-// Which resource? User? Channel? Message? Can't tell!
-```
-
-```typescript
-// CORRECT - Explicit domain errors with rich context
-export class UserNotFoundError extends Schema.TaggedError<UserNotFoundError>()(
-    "UserNotFoundError",
-    { userId: UserId, message: Schema.String },
-    HttpApiSchema.annotations({ status: 404 }),
-) {}
-
-export class ChannelNotFoundError extends Schema.TaggedError<ChannelNotFoundError>()(
-    "ChannelNotFoundError",
-    { channelId: ChannelId, message: Schema.String },
-    HttpApiSchema.annotations({ status: 404 }),
-) {}
-
-export class SessionExpiredError extends Schema.TaggedError<SessionExpiredError>()(
-    "SessionExpiredError",
-    { sessionId: SessionId, expiredAt: Schema.DateTimeUtc, message: Schema.String },
-    HttpApiSchema.annotations({ status: 401 }),
-) {}
-
-// Frontend can now show specific UI:
-// - UserNotFoundError → "User doesn't exist"
-// - ChannelNotFoundError → "Channel was deleted"
-// - SessionExpiredError → "Your session expired. Please log in again."
-```
-
-See `references/error-patterns.md` for error remapping and retry patterns.
+Generic errors lose context and prevent targeted recovery. See `references/error-patterns.md` for complete patterns including error remapping and retry strategies.
 
 ## Schema & Branded Types Pattern
 
 **Brand all entity IDs** for type safety across service boundaries:
 
 ```typescript
-import { Schema } from "effect"
+import { Schema } from "effect";
 
 // Entity IDs - always branded
-export const UserId = Schema.UUID.pipe(Schema.brand("@App/UserId"))
-export type UserId = Schema.Schema.Type<typeof UserId>
+export const UserId = Schema.UUID.pipe(Schema.brand("@App/UserId"));
+export type UserId = Schema.Schema.Type<typeof UserId>;
 
-export const OrganizationId = Schema.UUID.pipe(Schema.brand("@App/OrganizationId"))
-export type OrganizationId = Schema.Schema.Type<typeof OrganizationId>
+export const OrganizationId = Schema.UUID.pipe(
+  Schema.brand("@App/OrganizationId"),
+);
+export type OrganizationId = Schema.Schema.Type<typeof OrganizationId>;
 
 // Domain types - use Schema.Struct
 export const User = Schema.Struct({
-    id: UserId,
-    email: Schema.String,
-    name: Schema.String,
-    organizationId: OrganizationId,
-    createdAt: Schema.DateTimeUtc,
-})
-export type User = Schema.Schema.Type<typeof User>
+  id: UserId,
+  email: Schema.String,
+  name: Schema.String,
+  organizationId: OrganizationId,
+  createdAt: Schema.DateTimeUtc,
+});
+export type User = Schema.Schema.Type<typeof User>;
 
 // Input types for mutations
 export const CreateUserInput = Schema.Struct({
-    email: Schema.String.pipe(Schema.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)),
-    name: Schema.String.pipe(Schema.minLength(1)),
-    organizationId: OrganizationId,
-})
-export type CreateUserInput = Schema.Schema.Type<typeof CreateUserInput>
+  email: Schema.String.pipe(Schema.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)),
+  name: Schema.String.pipe(Schema.minLength(1)),
+  organizationId: OrganizationId,
+});
+export type CreateUserInput = Schema.Schema.Type<typeof CreateUserInput>;
 ```
 
 **When NOT to brand:**
+
 - Simple strings that don't cross service boundaries (URLs, file paths)
 - Primitive config values
 
@@ -263,22 +243,30 @@ See `references/schema-patterns.md` for transforms and advanced patterns.
 **Always use `Effect.fn`** for service methods. This provides automatic tracing with proper span names:
 
 ```typescript
-// CORRECT - Effect.fn with descriptive name
-const findById = Effect.fn("UserService.findById")(function* (id: UserId) {
-    yield* Effect.annotateCurrentSpan("userId", id)
-    const user = yield* repo.findById(id)
-    return user
-})
+// ❌ BAD - arrow function returning a generic effect
+const findById = (id: UserId) =>
+  Effect.gen(function* () {
+    // ...
+  });
 
-// CORRECT - Effect.fn with multiple parameters
-const transfer = Effect.fn("AccountService.transfer")(
-    function* (fromId: AccountId, toId: AccountId, amount: number) {
-        yield* Effect.annotateCurrentSpan("fromId", fromId)
-        yield* Effect.annotateCurrentSpan("toId", toId)
-        yield* Effect.annotateCurrentSpan("amount", amount)
-        // ...
-    }
-)
+// ✅ CORRECT - Effect.fn with descriptive name
+const findById = Effect.fn("UserService.findById")(function* (id: UserId) {
+  yield* Effect.annotateCurrentSpan("userId", id);
+  const user = yield* repo.findById(id);
+  return user;
+});
+
+// ✅ CORRECT - Effect.fn with multiple parameters
+const transfer = Effect.fn("AccountService.transfer")(function* (
+  fromId: AccountId,
+  toId: AccountId,
+  amount: number,
+) {
+  yield* Effect.annotateCurrentSpan("fromId", fromId);
+  yield* Effect.annotateCurrentSpan("toId", toId);
+  yield* Effect.annotateCurrentSpan("amount", amount);
+  // ...
+});
 ```
 
 ## Layer Composition
@@ -286,29 +274,32 @@ const transfer = Effect.fn("AccountService.transfer")(
 **Declare dependencies in the service**, not at usage sites:
 
 ```typescript
-// CORRECT - dependencies in service definition
-export class OrderService extends Effect.Service<OrderService>()("OrderService", {
+// ✅ CORRECT - dependencies in service definition
+export class OrderService extends Effect.Service<OrderService>()(
+  "OrderService",
+  {
     accessors: true,
     dependencies: [
-        UserService.Default,
-        ProductService.Default,
-        PaymentService.Default,
+      UserService.Default,
+      ProductService.Default,
+      PaymentService.Default,
     ],
     effect: Effect.gen(function* () {
-        const users = yield* UserService
-        const products = yield* ProductService
-        const payments = yield* PaymentService
-        // ...
+      const users = yield* UserService;
+      const products = yield* ProductService;
+      const payments = yield* PaymentService;
+      // ...
     }),
-}) {}
+  },
+) {}
 
 // At app root - simple merge
 const AppLive = Layer.mergeAll(
-    OrderService.Default,
-    // Infrastructure layers (intentionally not in dependencies)
-    DatabaseLive,
-    RedisLive,
-)
+  OrderService.Default,
+  // Infrastructure layers (intentionally not in dependencies)
+  DatabaseLive,
+  RedisLive,
+);
 ```
 
 **Layer composition patterns:**
@@ -341,17 +332,17 @@ See `references/layer-patterns.md` for testing layers, config-dependent layers, 
 **Never use `Option.getOrThrow`**. Always handle both cases explicitly:
 
 ```typescript
-// CORRECT - explicit handling
+// ✅ CORRECT - explicit handling
 yield* Option.match(maybeUser, {
-    onNone: () => Effect.fail(new UserNotFoundError({ userId, message: "Not found" })),
+    onNone: () => new UserNotFoundError({ userId, message: "Not found" }),
     onSome: (user) => Effect.succeed(user),
-})
+  });
 
-// CORRECT - with getOrElse for defaults
-const name = Option.getOrElse(maybeName, () => "Anonymous")
+// ✅ CORRECT - with getOrElse for defaults
+const name = Option.getOrElse(maybeName, () => "Anonymous");
 
-// CORRECT - Option.map for transformations
-const upperName = Option.map(maybeName, (n) => n.toUpperCase())
+// ✅ CORRECT - Option.map for transformations
+const upperName = Option.map(maybeName, (n) => n.toUpperCase());
 ```
 
 ## Effect Atom (Frontend State)
@@ -361,18 +352,18 @@ Effect Atom provides reactive state management for React with Effect integration
 ### Basic Atoms
 
 ```typescript
-import { Atom } from "@effect-atom/atom-react"
+import { Atom } from "@effect-atom/atom-react";
 
 // Define atoms OUTSIDE components
-const countAtom = Atom.make(0)
+const countAtom = Atom.make(0);
 
 // Use keepAlive for global state that should persist
-const userPrefsAtom = Atom.make({ theme: "dark" }).pipe(Atom.keepAlive)
+const userPrefsAtom = Atom.make({ theme: "dark" }).pipe(Atom.keepAlive);
 
 // Atom families for per-entity state
 const modalAtomFamily = Atom.family((type: string) =>
-    Atom.make({ isOpen: false }).pipe(Atom.keepAlive)
-)
+  Atom.make({ isOpen: false }).pipe(Atom.keepAlive),
+);
 ```
 
 ### React Integration
@@ -418,13 +409,13 @@ function UserProfile() {
 
 ```typescript
 const scrollYAtom = Atom.make((get) => {
-    const onScroll = () => get.setSelf(window.scrollY)
+  const onScroll = () => get.setSelf(window.scrollY);
 
-    window.addEventListener("scroll", onScroll)
-    get.addFinalizer(() => window.removeEventListener("scroll", onScroll)) // REQUIRED
+  window.addEventListener("scroll", onScroll);
+  get.addFinalizer(() => window.removeEventListener("scroll", onScroll)); // REQUIRED
 
-    return window.scrollY
-}).pipe(Atom.keepAlive)
+  return window.scrollY;
+}).pipe(Atom.keepAlive);
 ```
 
 ### React Mutations
@@ -445,6 +436,7 @@ See `references/effect-atom-patterns.md` for complete patterns including familie
 ## RPC & Cluster Patterns
 
 For RPC contracts and cluster workflows, see:
+
 - `references/rpc-cluster-patterns.md` - RpcGroup, Workflow.make, Activity patterns
 
 ## Anti-Patterns (Forbidden)
@@ -453,24 +445,25 @@ These patterns are **never acceptable**:
 
 ```typescript
 // FORBIDDEN - runSync/runPromise inside services
-const result = Effect.runSync(someEffect) // Never do this
+const result = Effect.runSync(someEffect); // Never do this
 
 // FORBIDDEN - throw inside Effect.gen
-yield* Effect.gen(function* () {
-    if (bad) throw new Error("No!") // Use Effect.fail instead
-})
+yield *
+  Effect.gen(function* () {
+    if (bad) throw new Error("No!"); // Use Effect.fail instead
+  });
 
 // FORBIDDEN - catchAll losing type info
-yield* effect.pipe(Effect.catchAll(() => Effect.fail(new GenericError())))
+yield * effect.pipe(Effect.catchAll(() => Effect.fail(new GenericError())));
 
 // FORBIDDEN - console.log
-console.log("debug") // Use Effect.log
+console.log("debug"); // Use Effect.log
 
 // FORBIDDEN - process.env directly
-const key = process.env.API_KEY // Use Config.string("API_KEY")
+const key = process.env.API_KEY; // Use Config.string("API_KEY")
 
 // FORBIDDEN - null/undefined in domain types
-type User = { name: string | null } // Use Option<string>
+type User = { name: string | null }; // Use Option<string>
 ```
 
 See `references/anti-patterns.md` for the complete list with rationale.
@@ -479,20 +472,20 @@ See `references/anti-patterns.md` for the complete list with rationale.
 
 ```typescript
 // Structured logging
-yield* Effect.log("Processing order", { orderId, userId, amount })
+yield * Effect.log("Processing order", { orderId, userId, amount });
 
 // Metrics
-const orderCounter = Metric.counter("orders_processed")
-yield* Metric.increment(orderCounter)
+const orderCounter = Metric.counter("orders_processed");
+yield * Metric.increment(orderCounter);
 
 // Config with validation
 const config = Config.all({
-    port: Config.integer("PORT").pipe(Config.withDefault(3000)),
-    apiKey: Config.redacted("API_KEY"),
-    maxRetries: Config.integer("MAX_RETRIES").pipe(
-        Config.validate({ message: "Must be positive", validation: (n) => n > 0 })
-    ),
-})
+  port: Config.integer("PORT").pipe(Config.withDefault(3000)),
+  apiKey: Config.redacted("API_KEY"),
+  maxRetries: Config.integer("MAX_RETRIES").pipe(
+    Config.validate({ message: "Must be positive", validation: (n) => n > 0 }),
+  ),
+});
 ```
 
 See `references/observability-patterns.md` for metrics and tracing patterns.
@@ -505,8 +498,10 @@ For detailed patterns, consult these reference files in the `references/` direct
 - `service-patterns.md` - Service definition, Effect.fn, Context.Tag exceptions
 - `error-patterns.md` - Schema.TaggedError, error remapping, retry patterns
 - `schema-patterns.md` - Branded types, transforms, Schema.Class
-- `layer-patterns.md` - Dependency composition, testing layers
+- `layer-patterns.md` - Dependency composition, testing layers, merge vs provide
+- `domain-predicates.md` - Equivalence, Order, typeclass-derived predicates
 - `rpc-cluster-patterns.md` - RpcGroup, Workflow, Activity patterns
 - `effect-atom-patterns.md` - Atom, families, React hooks, Result handling
 - `anti-patterns.md` - Complete list of forbidden patterns
 - `observability-patterns.md` - Logging, metrics, config patterns
+- `effect-test-patterns.md` - Testing patterns for effect based applications

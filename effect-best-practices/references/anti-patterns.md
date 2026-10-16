@@ -1,5 +1,24 @@
 # Anti-Patterns (Forbidden)
 
+## Table of Contents
+
+- [Effect.runSync/runPromise Inside Services](#forbidden-effectrunsyncrunpromise-inside-services)
+- [throw Inside Effect.gen](#forbidden-throw-inside-effectgen)
+- [catchAll Losing Type Information](#forbidden-catchall-losing-type-information)
+- [any/unknown Casts](#forbidden-anyunknown-casts)
+- [Promise in Service Signatures](#forbidden-promise-in-service-signatures)
+- [console.log](#forbidden-consolelog)
+- [process.env Directly](#forbidden-processenv-directly)
+- [null/undefined in Domain Types](#forbidden-nullundefined-in-domain-types)
+- [Option.getOrThrow](#forbidden-optiongetorthrow)
+- [Context.Tag for Business Services](#forbidden-contexttag-for-business-services)
+- [Ignoring Errors with orDie](#forbidden-ignoring-errors-with-ordie)
+- [mapError Instead of catchTag](#forbidden-maperror-instead-of-catchtag)
+- [Mixing Effect and Promise Chains](#forbidden-mixing-effect-and-promise-chains)
+- [Mutable State Without Ref](#forbidden-mutable-state-without-ref)
+- [Using Date.now() or new Date() Directly](#forbidden-using-datenow-or-new-date-directly)
+- [Deprecated `_` Adaptor in Effect.gen](#forbidden-deprecated-_-adaptor-in-effectgen)
+
 These patterns are **never acceptable** in Effect-TS code. Each is listed with rationale and the correct alternative.
 
 ## FORBIDDEN: Effect.runSync/runPromise Inside Services
@@ -21,6 +40,7 @@ export class UserService extends Effect.Service<UserService>()("UserService", {
 **Why:** Breaks Effect's composition model, loses error handling, can't be tested, loses tracing.
 
 **Correct:**
+
 ```typescript
 const findById = Effect.fn("UserService.findById")(function* (id: UserId) {
     return yield* repo.findById(id)
@@ -43,11 +63,12 @@ yield* Effect.gen(function* () {
 **Why:** Throws bypass Effect's error channel, can't be caught with `catchTag`, breaks type safety.
 
 **Correct:**
+
 ```typescript
 yield* Effect.gen(function* () {
     const user = yield* repo.findById(id)
     if (!user) {
-        return yield* Effect.fail(new UserNotFoundError({ userId: id, message: "Not found" }))
+        return yield* new UserNotFoundError({ userId: id, message: "Not found" })
     }
     return user
 })
@@ -67,12 +88,23 @@ yield* someEffect.pipe(
 **Why:** Loses specific error information, makes debugging harder, prevents specific error handling downstream.
 
 **Correct:**
+
 ```typescript
+// Different handlers per tag → use catchTags
 yield* someEffect.pipe(
     Effect.catchTags({
-        DatabaseError: (err) => Effect.fail(new ServiceUnavailableError({ message: err.message })),
-        ValidationError: (err) => Effect.fail(new BadRequestError({ message: err.message })),
+        DatabaseError: (err) => new ServiceUnavailableError({ message: err.message }),
+        ValidationError: (err) => new BadRequestError({ message: err.message }),
     }),
+)
+
+// Same handler for multiple tags → use catchTag with multiple tag strings
+yield* someEffect.pipe(
+    Effect.catchTag(
+        "DatabaseError",
+        "ConnectionError",
+        (err) => new ServiceUnavailableError({ message: err.message }),
+    ),
 )
 ```
 
@@ -87,6 +119,7 @@ const result = (await fetch(url)) as unknown as MyType
 **Why:** Completely bypasses type safety, can cause runtime errors, loses Effect's type guarantees.
 
 **Correct:**
+
 ```typescript
 // Use Schema for parsing unknown data
 const result = yield* Schema.decodeUnknown(MyType)(someValue)
@@ -115,6 +148,7 @@ export class UserService extends Effect.Service<UserService>()("UserService", {
 **Why:** Loses Effect's error handling, can't compose with other Effects, loses tracing/metrics.
 
 **Correct:**
+
 ```typescript
 const findById = Effect.fn("UserService.findById")(
     function* (id: UserId): Effect.Effect<User, UserNotFoundError> {
@@ -134,6 +168,7 @@ console.error("Error:", error)
 **Why:** Not structured, not captured by Effect's logging system, lost in production telemetry.
 
 **Correct:**
+
 ```typescript
 yield* Effect.log("Processing order", { orderId })
 yield* Effect.logError("Operation failed", { error: String(error) })
@@ -150,6 +185,7 @@ const port = parseInt(process.env.PORT || "3000")
 **Why:** No validation, no type safety, fails silently if missing, hard to test.
 
 **Correct:**
+
 ```typescript
 const config = yield* Config.all({
     apiKey: Config.redacted("API_KEY"),
@@ -203,6 +239,7 @@ type User = {
 **Why:** Null/undefined handling is error-prone, loses the explicit "absence" semantics.
 
 **Correct:**
+
 ```typescript
 const User = Schema.Struct({
     name: Schema.String,
@@ -222,10 +259,11 @@ const name = pipe(maybeName, Option.getOrThrow)
 **Why:** Throws exceptions, bypasses Effect's error handling, fails at runtime instead of compile time.
 
 **Correct:**
+
 ```typescript
 // Handle both cases explicitly
 yield* Option.match(maybeUser, {
-    onNone: () => Effect.fail(new UserNotFoundError({ userId, message: "Not found" })),
+    onNone: () => new UserNotFoundError({ userId, message: "Not found" }),
     onSome: Effect.succeed,
 })
 
@@ -251,6 +289,7 @@ export class UserService extends Context.Tag("UserService")<
 **Why:** Requires manual layer creation, no built-in accessors, more boilerplate.
 
 **Correct:**
+
 ```typescript
 export class UserService extends Effect.Service<UserService>()("UserService", {
     accessors: true,
@@ -269,16 +308,18 @@ yield* someEffect.pipe(Effect.orDie)
 **Why:** Converts recoverable errors to defects (unrecoverable), loses error information.
 
 **Acceptable exceptions:**
+
 - Truly unrecoverable situations (invalid program state)
 - After exhausting all recovery options
 - In test setup code
 
 **Correct:**
+
 ```typescript
 // Handle errors explicitly
 yield* someEffect.pipe(
     Effect.catchTag("RecoverableError", (err) =>
-        Effect.fail(new DomainError({ message: err.message }))
+        new DomainError({ message: err.message })
     ),
 )
 ```
@@ -295,10 +336,11 @@ yield* effect.pipe(
 **Why:** Loses error type information, can't discriminate between error types.
 
 **Correct:**
+
 ```typescript
 yield* effect.pipe(
     Effect.catchTag("SpecificError", (err) =>
-        Effect.fail(new MappedError({ message: err.message }))
+        new MappedError({ message: err.message })
     ),
 )
 ```
@@ -318,6 +360,7 @@ const result = await someEffect.pipe(
 **Why:** Loses Effect composition benefits, error handling becomes inconsistent.
 
 **Correct:**
+
 ```typescript
 const program = Effect.gen(function* () {
     const data = yield* someEffect
@@ -338,6 +381,7 @@ const increment = Effect.sync(() => { counter++ })
 **Why:** Race conditions, not testable, not composable, breaks referential transparency.
 
 **Correct:**
+
 ```typescript
 const program = Effect.gen(function* () {
     const counter = yield* Ref.make(0)
@@ -357,11 +401,32 @@ const timestamp = Date.now()
 **Why:** Not testable, introduces non-determinism, hard to mock in tests.
 
 **Correct:**
+
 ```typescript
 import { Clock } from "effect"
 
 const now = yield* Clock.currentTimeMillis
-const date = yield* Clock.currentTimeZone.pipe(
-    Effect.map((tz) => new Date())
-)
+```
+
+## FORBIDDEN: Deprecated `_` Adaptor in Effect.gen
+
+```typescript
+// FORBIDDEN - deprecated adaptor pattern
+Effect.gen(function* (_) {
+    const user = yield* _(repo.findById(id))
+    const posts = yield* _(fetchPosts(user.id))
+    return { user, posts }
+})
+```
+
+**Why:** The `_` adaptor function is deprecated. Modern Effect allows direct `yield*` without an adaptor.
+
+**Correct:**
+
+```typescript
+Effect.gen(function* () {
+    const user = yield* repo.findById(id)
+    const posts = yield* fetchPosts(user.id)
+    return { user, posts }
+})
 ```
