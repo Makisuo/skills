@@ -1,128 +1,124 @@
 ---
 name: david-workflow
-description: David's end-to-end way of working with an agent on a feature, fix or change. Plan in phases (with a verification plan decided up front), implement, verify and fix, open a PR (or a stack of PRs) with verification evidence attached, then deploy a preview, test it there with a separate sub agent, pull the traces of the new code from Maple and check they are performant. Use whenever David asks to build, ship, implement or fix something non-trivial, says "david workflow", "do it the usual way", "full workflow", or "take this to a PR".
+description: End-to-end workflow for a feature, fix or change. Plan in phases with a verification plan up front, implement, verify for real and review with sub agents, open a PR (or a gh stack) with evidence attached, drive CI and review comments to green, test on a preview deploy with a separate sub agent, check the new code's traces in Maple for performance, and confirm it is live after merge. Use when asked to build, ship, implement or fix something non-trivial, or on "david workflow", "full workflow", "push it through", "take this to a PR" or "make a stack".
 ---
 
-# David's workflow
+# Workflow
 
-This is how David wants work done, start to finish. Follow the stages in order. Each stage has an
-exit condition; do not move on until it holds. Small tasks still go through every stage, they are
-just shorter.
+Follow the stages in order; do not move on until a stage's exit condition holds. Small tasks go
+through every stage too, just shorter. The user should never have to ask "did you test it?" or
+"did you push it?".
 
 ## 1. Plan
 
-Before touching code, write a plan and show it to David.
+**Size the work.**
 
-**Size the work first.**
+- **One step** (one file, one bug, a few edits): say so and start implementing without waiting.
+- **Phased** (several areas, layers or packages): split into independently buildable phases. Mark
+  each parallel (own sub agent or session, no shared files) or sequential (name the dependency).
+  Two writers never touch the same files.
+- **Big feature**: phases that are each a reviewable PR become a `gh stack`. Name the branches.
 
-- **One step**: a single coherent change (one file, one bug, a few edits). Do it directly, no phases,
-  no sub agents. Say so explicitly: "this is one step".
-- **Phased**: anything that touches several areas, layers or packages. Break it deliberately into
-  phases where each phase is independently buildable and reviewable, and decide for each one:
-  - can it run as its own sub agent or session in its own worktree (independent files, no shared
-    edits with another phase)? Then mark it parallel.
-  - does it depend on an earlier phase (schema before API before UI)? Then mark it sequential and
-    name the dependency.
-  - Two writers never touch the same files. If phases overlap, merge them or serialize them.
-- **Big feature**: phases that are each a reviewable PR on their own become a **stacked PR** plan
-  (base PR first, each next PR branched off the previous one). Name the branches in the plan.
+**Reuse before building.** Use what the repo already has (components, services, query builders,
+error patterns, infra resources), read the official docs of the tools involved, and say in the
+plan what you reuse.
 
-**Plan the verification. This is mandatory, every plan has it.** For each phase and for the
-feature as a whole, write down how you will prove it works at the end:
+**Plan the verification (mandatory).** For each phase and the whole feature:
 
-- which existing tools prove it: unit/integration tests, typecheck, lint, the dev server in the
-  Browser pane, the iOS simulator, CLI runs, existing scripts, benchmarks, MCP tools;
-- what is missing to prove it, and the tool you will build for that (a test fixture, a seed
-  script, a lab page, a playground script, a bench query, a small CLI harness). Building
-  verification tooling is part of the work, not a nice-to-have;
-- what evidence you will capture for the PR (test output, screenshots, a screen recording,
-  query timings, trace links);
-- for UI changes: screenshots or a video are always required, plan which states to capture
-  (empty, loading, populated, error, mobile width, dark mode where relevant).
+- the existing tools that prove it (tests, typecheck, lint, dev server in the browser, simulator,
+  CLI runs, scripts, MCP tools);
+- the missing tooling you will build to prove it (fixture, seed script, lab page, bench query,
+  small harness). This is part of the work;
+- the evidence for the PR (test output, screenshots, video, timings, bundle size);
+- UI changes always need screenshots or video: list the states (empty, loading, populated, error,
+  mobile, dark mode);
+- perf claims need a before/after benchmark.
 
-A plan without a verification section is not finished. Exit condition: David has seen the plan
-(phases, parallel vs sequential, PR shape, verification plan) and nothing in it is still unknown.
+Real decisions go to the user as concrete examples to pick from, not open questions.
+
+Exit: for phased or big work, the user has approved the plan. Then run every phase to the end
+without stopping to ask whether to continue.
 
 ## 2. Implement
 
-- Execute phase by phase. Parallel phases go to sub agents or separate worktree sessions; give each
-  one a full brief (files, constraints, what done looks like, how to verify, and the repo rules
-  from CLAUDE.md and memory, since sub agents do not inherit them).
-- Build the verification tooling from the plan as you go, not at the end.
-- Check each sub agent's result yourself (read the diff, run its checks). A report is not proof.
+- Parallel phases go to sub agents with a full brief: files, constraints, done criteria, how to
+  verify, and the repo rules (sub agents do not inherit CLAUDE.md or memory).
+- Build the verification tooling as you go.
+- Follow the repo's conventions the first time. Fix root causes so the bug class cannot recur
+  (prefer a type error). No toggles nobody asked for, delete code you replace, keep comments short.
+- Add spans to new code paths so stage 6 can see them.
+- Check every sub agent's diff and checks yourself. A report is not proof.
 
-Exit condition: every phase is implemented and builds/typechecks.
+Exit: every phase is implemented and typechecks.
 
-## 3. Verify and fix
+## 3. Verify, review, fix
 
-- Run the verification plan for real: targeted tests for what changed (not the whole suite unless
-  asked), typecheck, lint, and drive the actual app or tool for anything user-visible.
-- Capture the evidence while you go (screenshots, recordings, test output, timings) and keep it in
-  the scratchpad for the PR.
-- Every failure gets fixed and re-verified. Loop until the whole plan passes. If something cannot be
-  verified locally, say so plainly and carry it into the preview stage.
+- Run the verification plan for real: targeted tests, typecheck, lint, and drive the actual app for
+  anything user-visible. Start servers, sign in and seed data yourself.
+- Share screenshots while UI work takes shape.
+- Send review sub agents over the full diff: correctness, repo conventions (`effect-review-v4` for
+  Effect code), simplification. Fix every finding and repeat until a pass is clean.
+- Capture evidence as you go. Anything not verifiable locally is stated and carried to stage 5.
 
-Exit condition: every item in the verification plan passed, with evidence captured.
+Exit: the whole verification plan passes, the last review is clean, evidence is captured.
 
-## 4. Open the PR (automatically)
+## 4. Open the PR
 
-Do not ask whether to open a PR. Once stage 3 passes, open it.
+Open it without asking, ready for review (not draft). If the user said "push to main", push to
+`main` and skip to stage 7.
 
-- Branch off the default branch if you are on it. One PR for a single change; a stack of PRs for
-  big features, in the order the plan named, each PR description linking the rest of the stack.
-- Commit only the files you changed (no `git commit -a`, no stash). Follow the repo's commit rules.
-- PR description: what changed and why, how it was verified, and the evidence:
-  - test/typecheck output summaries and any benchmark numbers;
-  - **for any UI change, always screenshots or a video embedded in the description.** Upload them
-    the way the repo already does; if there is no convention, push them to an orphan `pr-assets`
-    branch and embed the raw URLs. Never open a UI PR without visual evidence.
-- Bind the PR to the session (ccd_pr tools) and watch CI.
+- One PR per change; a `gh stack` for big features, each PR linking the rest. Follow-ups to stacked
+  work go on the stack. Update a stack by merging each branch into the next, not force-pushing.
+- Commit only files you changed; follow the repo's commit rules; add a changeset when a released
+  package changed.
+- Description: short and plain. What changed and why, how it was verified, the evidence. UI changes
+  always embed screenshots or video (repo convention, else an orphan `pr-assets` branch).
+- Enable CI auto-fix if available. Fix every failing check (even ones you did not cause), every
+  review comment and every merge conflict.
 
-Exit condition: PR (or stack) open with verification evidence in the description, CI green or
-failures being fixed.
+Exit: PR open with evidence, CI green, no open comments.
 
-## 5. Preview deploy and prod-like test
+## 5. Preview test
 
-Every PR gets tested in its prod-like environment, by a fresh pair of eyes.
+1. Deploy a preview the way the repo does it (Maple: `gh pr edit <n> --add-label preview`, see
+   `docs/pr-previews.md`). Elsewhere look for preview labels or deploy workflows; if none exist,
+   say so and propose one.
+2. Wait for the deploy check, then share the preview URL.
+3. Start a separate verification sub agent with only the PR context: preview URL, expected
+   behavior, flows to try, how to sign in (Maple: `infisical run --env dev -- bun run
+   preview:signin <n>`, never typing the key). It tests happy path and edge cases, records a video
+   and screenshots, and reports what broke.
+4. Post its evidence on the PR. Breakage goes back to stage 3.
 
-1. **Deploy a preview.** Use whatever the repo provides and say which you used:
-   - Maple: add the `preview` label (`gh pr edit <n> --add-label preview`); the stack comes up at
-     `app-pr-<n>.maple.dev`, `api-pr-<n>.maple.dev` etc. Read `docs/pr-previews.md` for limits
-     (max 8 live previews) and what is not in a preview.
-   - Other repos: look for preview labels, Vercel/Netlify/Cloudflare preview URLs, or deploy
-     workflows in `.github/workflows/`. If there is none, tell David and propose how to get one.
-2. **Wait for the deploy** to finish (the deploy check or PR comment), not by guessing.
-3. **Start a separate verification sub agent** with no implementation context beyond the PR: give
-   it the preview URL, what the feature should do, and the user flows to try. It drives the
-   preview in the browser, tries the happy path and the edge cases, captures screenshots/video,
-   and reports what worked and what broke.
-4. Anything broken goes back to stage 3 locally, then the PR is updated and the preview re-tested.
-
-Exit condition: the verification sub agent confirms the feature works in the preview.
+Exit: the sub agent confirms the feature works on the preview.
 
 ## 6. Traces and performance
 
-1. **Query Maple MCP** for the traces of the code you built, generated by the preview test
-   (`search_traces`, `inspect_trace`, `find_slow_traces`, `get_service_top_operations`,
-   `find_errors`; filter by the preview's service/environment and the new operations).
-2. **Post them on the PR as a comment** (`gh pr comment`): the trace links, the span tree of the key
-   operations, durations (p50/p95 where there is enough data), query counts, errors if any.
-3. **Judge performance.** Look for: slow spans, N+1 queries, waterfalls that should be parallel,
-   oversized warehouse scans, missing caching, unexpected errors or retries, missing spans for the
-   new code (missing instrumentation is a finding too).
-4. If it is not performant: improve it, then go through verify (3), update the PR (4), re-test in
-   the preview (5) and re-check traces (6) again. Post the before/after numbers as a new comment.
+1. Pull the preview test's traces for the new code from Maple MCP (`search_traces`,
+   `inspect_trace`, `find_slow_traces`, `find_errors`), filtered to the preview environment
+   (Maple previews report `deployment.environment` = `pr-<n>`).
+2. Comment them on the PR: trace links, key span tree, durations (p50/p95), query counts, errors.
+3. Look for slow spans, N+1 queries, serial waterfalls, oversized scans, missing caching, retries
+   and missing spans.
+4. If it is slow, fix it and repeat stages 3 to 6, posting before/after numbers.
 
-Exit condition: traces are on the PR and show the new code performs well.
+Exit: traces are on the PR and look good. Say it is ready to merge.
+
+## 7. After merge
+
+Watch the production deploy and fix it if it fails. Check prod errors and the new traces in Maple;
+if something broke and the fix is not quick, revert first. Remove the preview label if the PR stays
+open.
 
 ## Finish
 
-Report to David in a few lines: the PR link(s), what was verified where, the preview result,
-the trace/performance summary, and anything not verified or left open (proposed as a follow-up
-session, not buried in prose).
+A few lines: what changed, PR link(s), what was verified where, preview and trace results, a clear
+safe-to-merge verdict, and open items proposed as follow-up sessions.
 
 ## Always
 
-- Keep the task list current across all six stages.
-- Never claim something works without evidence from this run.
-- Follow the repo's CLAUDE.md and David's memory rules (writing style, commit rules, no em dashes).
+- Keep the task list current and never claim something works without evidence from this run.
+- Do it yourself with the available CLIs and tools; ask the user only for what truly needs them.
+- Diagnose from real data (Maple MCP, read-only prod queries), not guesses.
+- During long waits, say what you are waiting on.
+- Follow the repo's CLAUDE.md and the user's memory rules.
